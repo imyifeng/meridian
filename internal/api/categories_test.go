@@ -243,7 +243,7 @@ func TestDeletingCategoryFallsMemosBackToUncategorized(t *testing.T) {
 
 	type categoriesOut struct {
 		Categories []struct {
-			ID   int64 `json:"id"`
+			ID   int64  `json:"id"`
 			Name string `json:"name"`
 		} `json:"categories"`
 	}

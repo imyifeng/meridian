@@ -135,7 +135,7 @@ class FakeMeridianServer {
   }
 
   http.Response _createCategory(http.Request request, String user) {
-    if (!_isAdmin(user)) return _json(403, {'error': 'administrator_only'});
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
     final body = _body(request);
     final name = (body['name'] as String? ?? '').trim();
     if (name.isEmpty) return _json(400, {'error': 'invalid_request'});
@@ -152,7 +152,7 @@ class FakeMeridianServer {
   }
 
   http.Response _deleteCategory(String user, int? id) {
-    if (!_isAdmin(user)) return _json(403, {'error': 'administrator_only'});
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
     final category = _categories[id];
     if (category == null) return _json(404, {'error': 'not_found'});
     if (category['is_builtin'] == true) {
@@ -166,7 +166,7 @@ class FakeMeridianServer {
     return http.Response('', 204);
   }
 
-  bool _isAdmin(String user) => _roles[user] == 'administrator';
+  bool _isAdministrator(String user) => _roles[user] == 'administrator';
 
   /// Category assignment mirrors the real server: omitted → 未分类 (create)
   /// or unchanged (update); present but unknown → 400.

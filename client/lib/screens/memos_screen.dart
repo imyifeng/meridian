@@ -22,7 +22,7 @@ class MemosScreen extends StatefulWidget {
 }
 
 class _MemosScreenState extends State<MemosScreen> {
-  late Future<MemoBoard> _future;
+  late Future<MemoListData> _future;
 
   @override
   void initState() {
@@ -30,10 +30,10 @@ class _MemosScreenState extends State<MemosScreen> {
     _future = _load();
   }
 
-  Future<MemoBoard> _load() async {
+  Future<MemoListData> _load() async {
     final memos = await widget.api.memos(widget.token);
     final categories = await widget.api.categories(widget.token);
-    return MemoBoard(memos, {for (final c in categories) c.id: c.name});
+    return MemoListData(memos, {for (final c in categories) c.id: c.name});
   }
 
   void _reload() {
@@ -64,7 +64,7 @@ class _MemosScreenState extends State<MemosScreen> {
         onPressed: _openEditor,
         child: const Icon(Icons.add),
       ),
-      body: FutureBuilder<MemoBoard>(
+      body: FutureBuilder<MemoListData>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -106,9 +106,11 @@ class _MemosScreenState extends State<MemosScreen> {
   }
 }
 
-class MemoBoard {
+/// One loaded screenful: the user's memos plus the taxonomy names, fetched
+/// together so each row can show the category it lives in.
+class MemoListData {
   final List<Memo> memos;
   final Map<int, String> categoryNames;
 
-  MemoBoard(this.memos, this.categoryNames);
+  MemoListData(this.memos, this.categoryNames);
 }

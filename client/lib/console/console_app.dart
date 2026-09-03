@@ -118,6 +118,11 @@ class _ConsoleAppState extends State<ConsoleApp> {
   }
 
   Widget _consoleScaffold() {
-    return CategoriesScreen(api: _api, token: _session!.token, onSignOut: _signOut);
+    return CategoriesScreen(
+      api: _api,
+      token: _session!.token,
+      canManage: _session!.user.isAdministrator,
+      onSignOut: _signOut,
+    );
   }
 }

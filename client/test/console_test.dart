@@ -61,20 +61,18 @@ void main() {
     expect(find.byKey(const Key('category_工作')), findsOneWidget);
   });
 
-  testWidgets('非管理员能看到分类，但改动被服务器拒绝', (tester) async {
+  testWidgets('非管理员登录只能查看分类', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('bob', 'bob password', role: 'user');
 
     await signInAs(tester, fake, username: 'bob', password: 'bob password');
 
-    // Reading the taxonomy is for everyone.
+    // Reading the taxonomy is for everyone…
     expect(find.byKey(const Key('category_未分类')), findsOneWidget);
-
-    await tester.enterText(find.byKey(const Key('category_name_field')), 'bob 的分类');
-    await tester.tap(find.byKey(const Key('add_category_button')));
-    await tester.pumpAndSettle();
-
+    // …but there are no management controls for a non-administrator.
     expect(find.text('仅管理员可管理分类'), findsOneWidget);
-    expect(find.byKey(const Key('category_bob 的分类')), findsNothing);
+    expect(find.byKey(const Key('category_name_field')), findsNothing);
+    expect(find.byKey(const Key('add_category_button')), findsNothing);
+    expect(find.byIcon(Icons.delete_outline), findsNothing);
   });
 }

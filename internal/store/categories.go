@@ -10,9 +10,9 @@ import (
 // Category is one member of the instance-wide taxonomy (ADR-0002). Only an
 // administrator may add or remove members; 未分类 is built-in and permanent.
 type Category struct {
-	ID     int64  `json:"id"`
-	Name   string `json:"name"`
-	IsBuiltIn bool `json:"is_builtin"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	IsBuiltIn bool   `json:"is_builtin"`
 	// CreatedAt and UpdatedAt carry JSON tags so the API can serve store
 	// structs directly, matching Memo and User.
 	CreatedAt time.Time `json:"created_at"`
