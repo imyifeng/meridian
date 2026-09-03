@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/imyifeng/meridian/internal/store"
@@ -60,16 +59,8 @@ func (s *server) createCategory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
-func (s *server) categoryID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		return 0, false
-	}
-	return id, true
-}
-
 func (s *server) deleteCategory(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.categoryID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return

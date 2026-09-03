@@ -95,6 +95,39 @@ class MeridianApi {
     await _request('DELETE', '/api/v1/categories/$id', token: token);
   }
 
+  /// The instance's users, administrators only. Each entry carries
+  /// memo_count — the number the delete confirmation dialog must show.
+  Future<List<User>> users(String token) async {
+    final body = await _request('GET', '/api/v1/users', token: token);
+    return [
+      for (final u in body['users'] as List? ?? [])
+        User.fromJson(u as Map<String, dynamic>),
+    ];
+  }
+
+  /// Creates an ordinary user with issued credentials. The server answers
+  /// 409 for a username that is already taken.
+  Future<User> createUser(String token,
+      {required String username, required String password}) async {
+    final data = await _request('POST', '/api/v1/users', token: token,
+        body: {'username': username, 'password': password});
+    return User.fromJson(data);
+  }
+
+  /// Replaces a user's password; the server ends sessions issued under the
+  /// old one.
+  Future<void> resetPassword(String token,
+      {required int id, required String password}) async {
+    await _request('PUT', '/api/v1/users/$id/password', token: token,
+        body: {'password': password});
+  }
+
+  /// Hard-deletes a user; all of their data disappears with it server-side.
+  /// The server answers 409 when the caller targets themselves.
+  Future<void> deleteUser(String token, {required int id}) async {
+    await _request('DELETE', '/api/v1/users/$id', token: token);
+  }
+
   Future<List<Memo>> memos(String token) async {
     final body = await _request('GET', '/api/v1/memos', token: token);
     return [
@@ -147,10 +180,20 @@ class User {
   final int id;
   final String username;
 
-  /// 'administrator' or 'user'; only administrators may manage the taxonomy.
+  /// 'administrator' or 'user'; only administrators may manage users and the
+  /// taxonomy.
   final String role;
 
-  User({required this.id, required this.username, this.role = 'user'});
+  /// How many memos this user owns; set only in the administrator's user
+  /// list, where it feeds the delete confirmation dialog.
+  final int memoCount;
+
+  User({
+    required this.id,
+    required this.username,
+    this.role = 'user',
+    this.memoCount = 0,
+  });
 
   bool get isAdministrator => role == 'administrator';
 
@@ -158,6 +201,7 @@ class User {
         id: json['id'] as int,
         username: json['username'] as String,
         role: json['role'] as String? ?? 'user',
+        memoCount: json['memo_count'] as int? ?? 0,
       );
 }
 

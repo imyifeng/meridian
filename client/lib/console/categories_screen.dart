@@ -7,20 +7,21 @@ import '../api_client.dart';
 /// built-in 未分类 never offers a delete affordance. Non-administrators may
 /// look, but see no management controls at all — the server rejects their
 /// writes regardless (the API is the wall, this is the signpost).
+///
+/// A body without its own Scaffold: the console shell owns the AppBar and
+/// the 分类/用户 tabs.
 class CategoriesScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
 
   /// False for non-administrator accounts: read-only view.
   final bool canManage;
-  final VoidCallback onSignOut;
 
   const CategoriesScreen({
     super.key,
     required this.api,
     required this.token,
     required this.canManage,
-    required this.onSignOut,
   });
 
   @override
@@ -96,55 +97,53 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('分类管理'),
-        actions: [
-          IconButton(icon: const Icon(Icons.logout), tooltip: '退出登录', onPressed: widget.onSignOut),
-        ],
-      ),
-      body: FutureBuilder<List<Category>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+    return Column(
+      children: [
+        Expanded(
+          child: FutureBuilder<List<Category>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('加载分类失败'),
+                      const SizedBox(height: 12),
+                      FilledButton(onPressed: _reload, child: const Text('重试')),
+                    ],
+                  ),
+                );
+              }
+              final categories = snapshot.data ?? const <Category>[];
+              return ListView(
+                key: const Key('category_list'),
                 children: [
-                  const Text('加载分类失败'),
-                  const SizedBox(height: 12),
-                  FilledButton(onPressed: _reload, child: const Text('重试')),
+                  for (final category in categories)
+                    ListTile(
+                      key: Key('category_${category.name}'),
+                      title: Text(category.name),
+                      trailing: category.isBuiltin
+                          ? const Tooltip(message: '系统内置，不可删除', child: Text('内置'))
+                          : (widget.canManage
+                              ? IconButton(
+                                  key: Key('delete_category_${category.id}'),
+                                  icon: const Icon(Icons.delete_outline),
+                                  tooltip: '删除分类',
+                                  onPressed: () => _delete(category),
+                                )
+                              : null),
+                    ),
                 ],
-              ),
-            );
-          }
-          final categories = snapshot.data ?? const <Category>[];
-          return ListView(
-            key: const Key('category_list'),
-            children: [
-              for (final category in categories)
-                ListTile(
-                  key: Key('category_${category.name}'),
-                  title: Text(category.name),
-                  trailing: category.isBuiltin
-                      ? const Tooltip(message: '系统内置，不可删除', child: Text('内置'))
-                      : (widget.canManage
-                          ? IconButton(
-                              key: Key('delete_category_${category.id}'),
-                              icon: const Icon(Icons.delete_outline),
-                              tooltip: '删除分类',
-                              onPressed: () => _delete(category),
-                            )
-                          : null),
-                ),
-            ],
-          );
-        },
-      ),
-      bottomNavigationBar: widget.canManage ? _addForm() : _readOnlyBanner(),
+              );
+            },
+          ),
+        ),
+        widget.canManage ? _addForm() : _readOnlyBanner(),
+      ],
     );
   }
 

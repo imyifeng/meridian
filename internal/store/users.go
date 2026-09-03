@@ -31,23 +31,27 @@ func parseTime(s string) time.Time {
 	return t
 }
 
+// MaxPasswordBytes is the longest password bcrypt will hash; longer input is
+// rejected before hashing rather than truncated.
+const MaxPasswordBytes = 72
+
 // HashPassword hashes a plaintext password for storage.
 func HashPassword(password string) (string, error) {
 	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(h), err
 }
 
-// CreateUser adds a non-first user. The administrator user-management API
-// is a later ticket; for now tests seed extra users through this method.
-func (s *Store) CreateUser(username, password, role string) (*User, error) {
+// CreateUser adds an ordinary user on an administrator's behalf. Only the
+// setup wizard makes administrators (ADR-0001), so the role is not a choice.
+func (s *Store) CreateUser(username, password string) (*User, error) {
 	username = strings.TrimSpace(username)
 	hash, err := HashPassword(password)
 	if err != nil {
 		return nil, err
 	}
 	res, err := s.db.Exec(
-		"INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		username, hash, role, now(), now(),
+		"INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, 'user', ?, ?)",
+		username, hash, now(), now(),
 	)
 	if err != nil {
 		// The single pooled connection serializes writes, so a duplicate
@@ -61,13 +65,89 @@ func (s *Store) CreateUser(username, password, role string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &User{ID: id, Username: username, Role: role}, nil
+	return &User{ID: id, Username: username, Role: "user"}, nil
 }
 
 func (s *Store) usernameExists(username string) bool {
 	var one int
 	err := s.db.QueryRow("SELECT 1 FROM users WHERE username = ?", username).Scan(&one)
 	return err == nil
+}
+
+// UserSummary is one row of the administrator's user list: the user plus
+// how many memos deleting it would take with it (the confirmation dialog's
+// number). Categories are instance-wide, so they never appear here.
+type UserSummary struct {
+	User
+	MemoCount int64 `json:"memo_count"`
+}
+
+// Users lists every user on the instance, oldest first.
+func (s *Store) Users() ([]UserSummary, error) {
+	rows, err := s.db.Query(
+		`SELECT u.id, u.username, u.role, COUNT(m.id)
+		 FROM users u LEFT JOIN memos m ON m.user_id = u.id
+		 GROUP BY u.id ORDER BY u.id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserSummary
+	for rows.Next() {
+		var u UserSummary
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.MemoCount); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// ResetPassword replaces a user's password and ends every session issued
+// under the old one, so a reset revokes access, not just future logins.
+func (s *Store) ResetPassword(userID int64, password string) error {
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
+		"UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+		hash, now(), userID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteUser removes a user outright: memos and sessions cascade via
+// foreign keys, so nothing of the user's survives. Tags and reminders, once
+// they exist, must carry the same ON DELETE CASCADE.
+func (s *Store) DeleteUser(userID int64) error {
+	res, err := s.db.Exec("DELETE FROM users WHERE id = ?", userID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetupAdministrator creates the instance's first user inside the same

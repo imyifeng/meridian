@@ -111,15 +111,20 @@ func TestMemosAreScopedToTheirOwner(t *testing.T) {
 	env.Call("POST", "/api/v1/memos", administrator.Token,
 		map[string]string{"title": "管理员的备忘录", "body": "私密"}, nil)
 
-	// A second user: no administrator-created-users API yet (that is T3), so the
-	// fixture seeds one at the store layer and logs in through the real path.
-	if _, err := env.Store().CreateUser("bob", "bob's password", "user"); err != nil {
-		t.Fatalf("seed bob: %v", err)
+	// A second user, created and logged in through the real API (T3).
+	var bob struct {
+		ID int64 `json:"id"`
 	}
-	_, bobToken, err := env.Store().Login("bob", "bob's password")
-	if err != nil {
-		t.Fatalf("login bob: %v", err)
+	if resp := env.Call("POST", "/api/v1/users", administrator.Token,
+		map[string]string{"username": "bob", "password": "bob's password"}, &bob); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create bob: status %d, want 201", resp.StatusCode)
 	}
+	var bobSession struct {
+		Token string `json:"token"`
+	}
+	env.Call("POST", "/api/v1/auth/login", "",
+		map[string]string{"username": "bob", "password": "bob's password"}, &bobSession)
+	bobToken := bobSession.Token
 
 	// bob cannot read, change, or delete the administrator's memo: it looks like it
 	// does not exist.
