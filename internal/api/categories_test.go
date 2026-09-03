@@ -121,15 +121,20 @@ func TestOnlyAdministratorChangesTaxonomy(t *testing.T) {
 	env := apitest.NewEnv(t)
 	administrator := env.Administrator()
 
-	// No administrator user-management API yet (that is T3), so the fixture
-	// seeds an ordinary user at the store layer and logs in for real.
-	if _, err := env.Store().CreateUser("bob", "bob's password", "user"); err != nil {
-		t.Fatalf("seed bob: %v", err)
+	// A second user, created and logged in through the real API (T3).
+	var bobID struct {
+		ID int64 `json:"id"`
 	}
-	_, bobToken, err := env.Store().Login("bob", "bob's password")
-	if err != nil {
-		t.Fatalf("login bob: %v", err)
+	if resp := env.Call("POST", "/api/v1/users", administrator.Token,
+		map[string]string{"username": "bob", "password": "bob's password"}, &bobID); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create bob: status %d, want 201", resp.StatusCode)
 	}
+	var bobSession struct {
+		Token string `json:"token"`
+	}
+	env.Call("POST", "/api/v1/auth/login", "",
+		map[string]string{"username": "bob", "password": "bob's password"}, &bobSession)
+	bobToken := bobSession.Token
 
 	// Reading the taxonomy is for everyone: clients need it to offer the
 	// category picker.

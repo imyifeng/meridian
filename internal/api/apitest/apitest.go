@@ -61,10 +61,6 @@ func (e *Env) Close() {
 
 func (e *Env) URL() string { return e.srv.URL }
 
-// Store exposes the underlying store for fixture seeding (e.g. extra
-// users) before the administrator user-management API exists.
-func (e *Env) Store() *store.Store { return e.st }
-
 func (e *Env) Restart() {
 	e.srv.Close()
 	if err := e.st.Close(); err != nil {
