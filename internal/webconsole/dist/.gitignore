@@ -1,0 +1,4 @@
+# Built Flutter Web assets land here via `make web-console`; they are build
+# output, not source. Only this ignore file is tracked.
+*
+!.gitignore

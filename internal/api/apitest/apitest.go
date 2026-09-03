@@ -47,6 +47,11 @@ func (e *Env) open() {
 	}
 	e.st = st
 	e.srv = httptest.NewServer(api.NewHandler(st))
+	// Redirects are part of the API surface: return them instead of
+	// silently following.
+	e.srv.Client().CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 }
 
 func (e *Env) Close() {

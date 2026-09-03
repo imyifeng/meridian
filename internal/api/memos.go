@@ -12,14 +12,23 @@ import (
 type memoInput struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
+	// CategoryID nil means "not specified": create defaults to 未分类, update
+	// keeps the current category. An explicit non-positive id is invalid.
+	CategoryID *int64 `json:"category_id"`
 }
 
-func (in memoInput) validate() (title, body string, ok bool) {
+func (in memoInput) validate() (title, body string, categoryID int64, ok bool) {
 	title = strings.TrimSpace(in.Title)
 	if title == "" {
-		return "", "", false
+		return "", "", 0, false
 	}
-	return title, in.Body, true
+	if in.CategoryID != nil {
+		if *in.CategoryID <= 0 {
+			return "", "", 0, false
+		}
+		categoryID = *in.CategoryID
+	}
+	return title, in.Body, categoryID, true
 }
 
 func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
@@ -27,12 +36,16 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	title, body, ok := in.validate()
+	title, body, categoryID, ok := in.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.CreateMemo(identity(r).ID, title, body)
+	m, err := s.st.CreateMemo(identity(r).ID, title, body, categoryID)
+	if errors.Is(err, store.ErrCategoryNotFound) {
+		writeError(w, http.StatusBadRequest, "unknown_category")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
@@ -88,12 +101,16 @@ func (s *server) updateMemo(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	title, body, ok := in.validate()
+	title, body, categoryID, ok := in.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body)
+	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body, categoryID)
+	if errors.Is(err, store.ErrCategoryNotFound) {
+		writeError(w, http.StatusBadRequest, "unknown_category")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
