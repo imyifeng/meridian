@@ -128,33 +128,51 @@ class MeridianApi {
     await _request('DELETE', '/api/v1/users/$id', token: token);
   }
 
-  Future<List<Memo>> memos(String token) async {
-    final body = await _request('GET', '/api/v1/memos', token: token);
+  /// The signed-in user's own tag names — the autocomplete data source
+  /// (T4). Tags never cross users.
+  Future<List<String>> tags(String token) async {
+    final body = await _request('GET', '/api/v1/tags', token: token);
+    return [
+      for (final t in body['tags'] as List? ?? []) t as String,
+    ];
+  }
+
+  /// tag non-null lists only the memos carrying that tag — a body without
+  /// the word still matches (T4).
+  Future<List<Memo>> memos(String token, {String? tag}) async {
+    final suffix = tag == null ? '' : '?tag=${Uri.encodeQueryComponent(tag)}';
+    final body = await _request('GET', '/api/v1/memos$suffix', token: token);
     return [
       for (final m in body['memos'] as List? ?? [])
         Memo.fromJson(m as Map<String, dynamic>),
     ];
   }
 
-  /// categoryId omitted → the server files the memo under 未分类.
+  /// categoryId omitted → the server files the memo under 未分类; tags
+  /// omitted → it starts with none. A non-null tags list is saved as given.
   Future<Memo> createMemo(String token,
-      {required String title, String body = '', int? categoryId}) async {
+      {required String title, String body = '', int? categoryId,
+      List<String>? tags}) async {
     final data = await _request('POST', '/api/v1/memos', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
+      'tags': ?tags,
     });
     return Memo.fromJson(data);
   }
 
-  /// categoryId omitted → the memo keeps its current category.
+  /// categoryId omitted → the memo keeps its current category; tags omitted
+  /// → it keeps its current tags. A non-null list (even empty) replaces the
+  /// whole set.
   Future<Memo> updateMemo(String token,
       {required int id, required String title, String body = '',
-      int? categoryId}) async {
+      int? categoryId, List<String>? tags}) async {
     final data = await _request('PUT', '/api/v1/memos/$id', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
+      'tags': ?tags,
     });
     return Memo.fromJson(data);
   }
@@ -230,17 +248,25 @@ class Memo {
   /// (new memos default to 未分类).
   final int categoryId;
 
+  /// The user's own tags (T4), in saved order; plain text by definition, so
+  /// they are rendered verbatim, never as Markdown.
+  final List<String> tags;
+
   Memo(
       {required this.id,
       required this.title,
       required this.body,
-      required this.categoryId});
+      required this.categoryId,
+      this.tags = const []});
 
   factory Memo.fromJson(Map<String, dynamic> json) => Memo(
         id: json['id'] as int,
         title: json['title'] as String,
         body: json['body'] as String? ?? '',
         categoryId: json['category_id'] as int? ?? 0,
+        tags: [
+          for (final t in json['tags'] as List? ?? []) t as String,
+        ],
       );
 }
 

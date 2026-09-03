@@ -120,6 +120,15 @@ var migrations = []string{
 	SELECT id, user_id, (SELECT id FROM categories WHERE is_builtin = 1), title, body, created_at, updated_at
 	FROM memos_pre_taxonomy;
 	DROP TABLE memos_pre_taxonomy;`,
+	// T4: user-authored tags. The join table keeps input order via rowid and
+	// rides memos' ON DELETE CASCADE, so tags have no recycle bin of their
+	// own; the name carries no per-user table — a tag belongs to whoever's
+	// memo carries it, and identical names across users are mere coincidences.
+	`CREATE TABLE memo_tags (
+		memo_id INTEGER NOT NULL REFERENCES memos(id) ON DELETE CASCADE,
+		name    TEXT NOT NULL,
+		PRIMARY KEY (memo_id, name)
+	);`,
 }
 
 func (s *Store) migrate() error {
