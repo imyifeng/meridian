@@ -15,6 +15,9 @@ var (
 	ErrAlreadyInitialized = errors.New("instance already initialized")
 	ErrUsernameTaken      = errors.New("username taken")
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrCategoryNameTaken  = errors.New("category name taken")
+	ErrBuiltinCategory    = errors.New("built-in category")
+	ErrCategoryNotFound   = errors.New("category not found")
 )
 
 // Store is a handle to one Meridian instance's SQLite database.
@@ -40,6 +43,12 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate %s: %w", path, err)
+	}
+	// 未分类 must exist on every open: new memos and deleted-category
+	// fallbacks depend on it (ADR-0002).
+	if err := s.ensureBuiltinCategory(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("seed built-in category: %w", err)
 	}
 	return s, nil
 }
@@ -84,6 +93,33 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);`,
+	// ADR-0002: one instance-wide category taxonomy. The built-in 未分类 is
+	// seeded with a fixed epoch timestamp — its timestamps are never shown.
+	// Existing memos (pre-taxonomy) rebuild into the new shape, every row
+	// falling back to 未分类.
+	`CREATE TABLE categories (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		name       TEXT NOT NULL UNIQUE,
+		is_builtin INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	INSERT INTO categories (name, is_builtin, created_at, updated_at)
+	VALUES ('未分类', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z');
+	ALTER TABLE memos RENAME TO memos_pre_taxonomy;
+	CREATE TABLE memos (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		category_id INTEGER NOT NULL REFERENCES categories(id),
+		title       TEXT NOT NULL,
+		body        TEXT NOT NULL DEFAULT '',
+		created_at  TEXT NOT NULL,
+		updated_at  TEXT NOT NULL
+	);
+	INSERT INTO memos (id, user_id, category_id, title, body, created_at, updated_at)
+	SELECT id, user_id, (SELECT id FROM categories WHERE is_builtin = 1), title, body, created_at, updated_at
+	FROM memos_pre_taxonomy;
+	DROP TABLE memos_pre_taxonomy;`,
 }
 
 func (s *Store) migrate() error {

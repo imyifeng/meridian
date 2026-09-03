@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/imyifeng/meridian/internal/store"
+	"github.com/imyifeng/meridian/internal/webconsole"
 )
 
 // server wires handlers to the store.
@@ -23,11 +24,17 @@ func NewHandler(st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/v1/instance", s.getInstance)
 	mux.HandleFunc("POST /api/v1/setup/administrator", s.setupAdministrator)
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	mux.Handle("GET /api/v1/categories", s.requireAuth(http.HandlerFunc(s.listCategories)))
+	mux.Handle("POST /api/v1/categories", s.requireAuth(s.requireAdministrator(http.HandlerFunc(s.createCategory))))
+	mux.Handle("DELETE /api/v1/categories/{id}", s.requireAuth(s.requireAdministrator(http.HandlerFunc(s.deleteCategory))))
 	mux.Handle("GET /api/v1/memos", s.requireAuth(http.HandlerFunc(s.listMemos)))
 	mux.Handle("POST /api/v1/memos", s.requireAuth(http.HandlerFunc(s.createMemo)))
 	mux.Handle("GET /api/v1/memos/{id}", s.requireAuth(http.HandlerFunc(s.getMemo)))
 	mux.Handle("PUT /api/v1/memos/{id}", s.requireAuth(http.HandlerFunc(s.updateMemo)))
 	mux.Handle("DELETE /api/v1/memos/{id}", s.requireAuth(http.HandlerFunc(s.deleteMemo)))
+	mux.Handle("GET /{$}", http.RedirectHandler("/console/", http.StatusFound))
+	mux.Handle("GET /console", http.RedirectHandler("/console/", http.StatusFound))
+	mux.Handle("GET /console/", http.StripPrefix("/console", webconsole.Handler()))
 	return mux
 }
 

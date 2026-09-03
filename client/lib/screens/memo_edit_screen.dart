@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 
-/// Plain-text title + body editor for creating and editing a memo. T1
-/// keeps this deliberately minimal; the WYSIWYG editor is a later ticket.
+/// Plain-text title + body editor for creating and editing a memo, plus the
+/// category picker: memos live in exactly one taxonomy category (ADR-0002),
+/// new ones default to the built-in 未分类. The WYSIWYG editor is a later
+/// ticket.
 class MemoEditScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
@@ -18,6 +20,8 @@ class MemoEditScreen extends StatefulWidget {
 class _MemoEditScreenState extends State<MemoEditScreen> {
   late final TextEditingController _title;
   late final TextEditingController _body;
+  late Future<List<Category>> _categories;
+  int? _categoryId;
   bool _busy = false;
 
   @override
@@ -25,6 +29,8 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     super.initState();
     _title = TextEditingController(text: widget.memo?.title ?? '');
     _body = TextEditingController(text: widget.memo?.body ?? '');
+    _categoryId = widget.memo?.categoryId;
+    _categories = widget.api.categories(widget.token);
   }
 
   @override
@@ -43,15 +49,18 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     setState(() => _busy = true);
     try {
       if (widget.memo == null) {
-        await widget.api.createMemo(widget.token, title: title, body: _body.text);
+        await widget.api.createMemo(widget.token,
+            title: title, body: _body.text, categoryId: _categoryId);
       } else {
         await widget.api.updateMemo(widget.token,
-            id: widget.memo!.id, title: title, body: _body.text);
+            id: widget.memo!.id, title: title, body: _body.text, categoryId: _categoryId);
       }
       if (mounted) Navigator.of(context).pop();
-    } on ApiException {
+    } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
+        final message =
+            e.code == 'unknown_category' ? '该分类已不存在，请重新选择' : '保存失败，请重试';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -112,6 +121,51 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
               enabled: !_busy,
             ),
             const SizedBox(height: 12),
+            // The taxonomy is fixed (ADR-0002): pick among existing
+            // categories, never type a new one.
+            FutureBuilder<List<Category>>(
+              future: _categories,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                        width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return Row(
+                    children: [
+                      const Text('分类加载失败'),
+                      TextButton(onPressed: _reloadCategories, child: const Text('重试')),
+                    ],
+                  );
+                }
+                final categories = snapshot.data ?? const <Category>[];
+                // An unknown stored category (deleted elsewhere meanwhile)
+                // falls back to the built-in one.
+                var selected = _categoryId;
+                if (categories.every((c) => c.id != selected)) {
+                  selected = _defaultCategoryId(categories);
+                }
+                if (selected != _categoryId) {
+                  _categoryId = selected;
+                }
+                return DropdownButtonFormField<int>(
+                  key: const Key('category_dropdown'),
+                  initialValue: _categoryId,
+                  decoration: const InputDecoration(labelText: '分类'),
+                  items: [
+                    for (final c in categories)
+                      DropdownMenuItem(value: c.id, child: Text(c.name)),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() => _categoryId = value),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
             Expanded(
               child: TextField(
                 controller: _body,
@@ -131,5 +185,16 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
         ),
       ),
     );
+  }
+
+  void _reloadCategories() {
+    setState(() => _categories = widget.api.categories(widget.token));
+  }
+
+  int? _defaultCategoryId(List<Category> categories) {
+    for (final c in categories) {
+      if (c.isBuiltin) return c.id;
+    }
+    return categories.isEmpty ? null : categories.first.id;
   }
 }

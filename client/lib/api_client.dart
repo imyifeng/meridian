@@ -59,7 +59,7 @@ class MeridianApi {
   /// Creates the first administrator; the server closes the wizard forever
   /// afterwards (ADR-0001).
   Future<Session> setupAdministrator(String username, String password) async {
-    final body = await _request('POST', '/api/v1/setup/admin',
+    final body = await _request('POST', '/api/v1/setup/administrator',
         body: {'username': username, 'password': password});
     return Session.fromJson(body);
   }
@@ -70,6 +70,31 @@ class MeridianApi {
     return Session.fromJson(body);
   }
 
+  /// The instance taxonomy (ADR-0002): every authenticated user may read it —
+  /// clients need it to offer the category picker. Only administrators may
+  /// change it, and only via the Web Console.
+  Future<List<Category>> categories(String token) async {
+    final body = await _request('GET', '/api/v1/categories', token: token);
+    return [
+      for (final c in body['categories'] as List? ?? [])
+        Category.fromJson(c as Map<String, dynamic>),
+    ];
+  }
+
+  /// Adds a category to the taxonomy. Administrators only; the server
+  /// answers 403 for anyone else and 409 for a name that is already taken.
+  Future<Category> createCategory(String token, {required String name}) async {
+    final data = await _request('POST', '/api/v1/categories', token: token,
+        body: {'name': name});
+    return Category.fromJson(data);
+  }
+
+  /// Deletes a category; its memos fall back to 未分类 server-side. The
+  /// built-in cannot be deleted (409).
+  Future<void> deleteCategory(String token, {required int id}) async {
+    await _request('DELETE', '/api/v1/categories/$id', token: token);
+  }
+
   Future<List<Memo>> memos(String token) async {
     final body = await _request('GET', '/api/v1/memos', token: token);
     return [
@@ -78,17 +103,26 @@ class MeridianApi {
     ];
   }
 
+  /// categoryId omitted → the server files the memo under 未分类.
   Future<Memo> createMemo(String token,
-      {required String title, String body = ''}) async {
-    final data = await _request('POST', '/api/v1/memos', token: token,
-        body: {'title': title, 'body': body});
+      {required String title, String body = '', int? categoryId}) async {
+    final data = await _request('POST', '/api/v1/memos', token: token, body: {
+      'title': title,
+      'body': body,
+      'category_id': ?categoryId,
+    });
     return Memo.fromJson(data);
   }
 
+  /// categoryId omitted → the memo keeps its current category.
   Future<Memo> updateMemo(String token,
-      {required int id, required String title, String body = ''}) async {
-    final data = await _request('PUT', '/api/v1/memos/$id', token: token,
-        body: {'title': title, 'body': body});
+      {required int id, required String title, String body = '',
+      int? categoryId}) async {
+    final data = await _request('PUT', '/api/v1/memos/$id', token: token, body: {
+      'title': title,
+      'body': body,
+      'category_id': ?categoryId,
+    });
     return Memo.fromJson(data);
   }
 
@@ -113,11 +147,33 @@ class User {
   final int id;
   final String username;
 
-  User({required this.id, required this.username});
+  /// 'administrator' or 'user'; only administrators may manage the taxonomy.
+  final String role;
+
+  User({required this.id, required this.username, this.role = 'user'});
+
+  bool get isAdministrator => role == 'administrator';
 
   factory User.fromJson(Map<String, dynamic> json) => User(
         id: json['id'] as int,
         username: json['username'] as String,
+        role: json['role'] as String? ?? 'user',
+      );
+}
+
+class Category {
+  final int id;
+  final String name;
+
+  /// True only for the built-in 未分类: permanent, not deletable.
+  final bool isBuiltin;
+
+  Category({required this.id, required this.name, required this.isBuiltin});
+
+  factory Category.fromJson(Map<String, dynamic> json) => Category(
+        id: json['id'] as int,
+        name: json['name'] as String,
+        isBuiltin: json['is_builtin'] as bool? ?? false,
       );
 }
 
@@ -126,12 +182,21 @@ class Memo {
   final String title;
   final String body;
 
-  Memo({required this.id, required this.title, required this.body});
+  /// The taxonomy category the memo lives in; the server always sets it
+  /// (new memos default to 未分类).
+  final int categoryId;
+
+  Memo(
+      {required this.id,
+      required this.title,
+      required this.body,
+      required this.categoryId});
 
   factory Memo.fromJson(Map<String, dynamic> json) => Memo(
         id: json['id'] as int,
         title: json['title'] as String,
         body: json['body'] as String? ?? '',
+        categoryId: json['category_id'] as int? ?? 0,
       );
 }
 
