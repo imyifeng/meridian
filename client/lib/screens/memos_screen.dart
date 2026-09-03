@@ -23,6 +23,7 @@ class MemosScreen extends StatefulWidget {
 
 class _MemosScreenState extends State<MemosScreen> {
   late Future<MemoListData> _future;
+  String? _filterTag;
 
   @override
   void initState() {
@@ -31,13 +32,67 @@ class _MemosScreenState extends State<MemosScreen> {
   }
 
   Future<MemoListData> _load() async {
-    final memos = await widget.api.memos(widget.token);
+    // tag non-null asks the server for only the memos carrying it — a memo
+    // whose body never mentions the word still matches (T4).
+    final memos = await widget.api.memos(widget.token, tag: _filterTag);
     final categories = await widget.api.categories(widget.token);
     return MemoListData(memos, {for (final c in categories) c.id: c.name});
   }
 
   void _reload() {
     setState(() {
+      _future = _load();
+    });
+  }
+
+  /// Offers the user's own tag history (T4); picking one filters the list.
+  Future<void> _pickFilter() async {
+    List<String> tags;
+    try {
+      tags = await widget.api.tags(widget.token);
+    } on ApiException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('加载标签失败')));
+      }
+      return;
+    }
+    if (!mounted) return;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: tags.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('还没有用过的标签'),
+              )
+            : ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final t in tags)
+                      ListTile(
+                        key: Key('filter_tag_$t'),
+                        leading: const Icon(Icons.label_outline),
+                        title: Text(t),
+                        onTap: () => Navigator.of(context).pop(t),
+                      ),
+                  ],
+                ),
+              ),
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      _filterTag = picked;
+      _future = _load();
+    });
+  }
+
+  void _clearFilter() {
+    setState(() {
+      _filterTag = null;
       _future = _load();
     });
   }
@@ -53,8 +108,21 @@ class _MemosScreenState extends State<MemosScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Meridian'),
+        title: Text(_filterTag == null ? 'Meridian' : '标签：$_filterTag'),
         actions: [
+          if (_filterTag != null)
+            IconButton(
+              key: const Key('clear_filter_button'),
+              icon: const Icon(Icons.close),
+              tooltip: '清除筛选',
+              onPressed: _clearFilter,
+            ),
+          IconButton(
+            key: const Key('filter_button'),
+            icon: const Icon(Icons.filter_list),
+            tooltip: '按标签筛选',
+            onPressed: _pickFilter,
+          ),
           IconButton(icon: const Icon(Icons.logout), tooltip: '退出登录', onPressed: widget.onSignOut),
         ],
       ),
@@ -85,7 +153,9 @@ class _MemosScreenState extends State<MemosScreen> {
           final memos = snapshot.data?.memos ?? const <Memo>[];
           final categoryNames = snapshot.data?.categoryNames ?? const {};
           if (memos.isEmpty) {
-            return const Center(child: Text('暂无备忘录'));
+            return Center(
+              child: Text(_filterTag == null ? '暂无备忘录' : '该标签下暂无备忘录'),
+            );
           }
           return ListView.builder(
             key: const Key('memo_list'),

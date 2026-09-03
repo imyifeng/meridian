@@ -15,20 +15,26 @@ type memoInput struct {
 	// CategoryID nil means "not specified": create defaults to 未分类, update
 	// keeps the current category. An explicit non-positive id is invalid.
 	CategoryID *int64 `json:"category_id"`
+	// Tags nil means "not specified": create starts with no tags, update
+	// keeps the current ones. Present (even empty) replaces the whole set.
+	Tags *[]string `json:"tags"`
 }
 
-func (in memoInput) validate() (title, body string, categoryID int64, ok bool) {
+func (in memoInput) validate() (title, body string, categoryID int64, tags []string, ok bool) {
 	title = strings.TrimSpace(in.Title)
 	if title == "" {
-		return "", "", 0, false
+		return "", "", 0, nil, false
 	}
 	if in.CategoryID != nil {
 		if *in.CategoryID <= 0 {
-			return "", "", 0, false
+			return "", "", 0, nil, false
 		}
 		categoryID = *in.CategoryID
 	}
-	return title, in.Body, categoryID, true
+	if in.Tags != nil {
+		tags = *in.Tags
+	}
+	return title, in.Body, categoryID, tags, true
 }
 
 func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
@@ -36,14 +42,18 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	title, body, categoryID, ok := in.validate()
+	title, body, categoryID, tags, ok := in.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.CreateMemo(identity(r).ID, title, body, categoryID)
+	m, err := s.st.CreateMemo(identity(r).ID, title, body, categoryID, tags)
 	if errors.Is(err, store.ErrCategoryNotFound) {
 		writeError(w, http.StatusBadRequest, "unknown_category")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidTag) {
+		writeError(w, http.StatusBadRequest, "invalid_tag")
 		return
 	}
 	if err != nil {
@@ -54,7 +64,16 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) listMemos(w http.ResponseWriter, r *http.Request) {
-	memos, err := s.st.MemosByUser(identity(r).ID)
+	tag := r.URL.Query().Get("tag")
+	var (
+		memos []store.Memo
+		err   error
+	)
+	if tag == "" {
+		memos, err = s.st.MemosByUser(identity(r).ID)
+	} else {
+		memos, err = s.st.MemosByUserAndTag(identity(r).ID, tag)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
@@ -63,6 +82,20 @@ func (s *server) listMemos(w http.ResponseWriter, r *http.Request) {
 		memos = []store.Memo{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"memos": memos})
+}
+
+// listTags serves the signed-in user's own tag names — the autocomplete
+// data source (T4). Tags never cross users.
+func (s *server) listTags(w http.ResponseWriter, r *http.Request) {
+	names, err := s.st.TagNamesByUser(identity(r).ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	if names == nil {
+		names = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tags": names})
 }
 
 func (s *server) memoID(r *http.Request) (int64, bool) {
@@ -101,14 +134,18 @@ func (s *server) updateMemo(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	title, body, categoryID, ok := in.validate()
+	title, body, categoryID, tags, ok := in.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body, categoryID)
+	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body, categoryID, tags)
 	if errors.Is(err, store.ErrCategoryNotFound) {
 		writeError(w, http.StatusBadRequest, "unknown_category")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidTag) {
+		writeError(w, http.StatusBadRequest, "invalid_tag")
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) {

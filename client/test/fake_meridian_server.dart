@@ -52,16 +52,32 @@ class FakeMeridianServer {
   }
 
   /// Pre-seeds a memo owned by [username], standing in for that user's client.
-  void seedMemo(String username, String title) {
+  void seedMemo(String username, String title,
+      {String? body, List<String>? tags}) {
     _memos.add({
       'id': _nextMemoId++,
       'user_id': username,
       'category_id': uncategorizedId,
       'title': title,
-      'body': '',
+      'body': body ?? '',
+      'tags': tags != null ? _normalizeTags(tags)! : <String>[],
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     });
+  }
+
+  /// Same rules as the real server: trim each name, reject blank or
+  /// over-long ones (400 invalid_tag), dedupe keeping first occurrence.
+  /// Returns null when any name is invalid.
+  static List<String>? _normalizeTags(List<dynamic> names) {
+    final out = <String>[];
+    for (final raw in names) {
+      if (raw is! String) return null;
+      final name = raw.trim();
+      if (name.isEmpty || name.runes.length > 50) return null;
+      if (!out.contains(name)) out.add(name);
+    }
+    return out;
   }
 
   Map<String, dynamic> userByName(String username) => _users[username]!;
@@ -112,15 +128,30 @@ class FakeMeridianServer {
         return match.isEmpty ? _json(404, {'error': 'not_found'}) : _json(200, match.first);
       });
     } else if (path == '/api/v1/memos' && request.method == 'GET') {
-      r = await _withAuth(request, (user) async => _json(200, {
-            'memos': _memos.where((m) => m['user_id'] == user).toList(),
-          }));
+      r = await _withAuth(request, (user) async {
+        final tag = request.url.queryParameters['tag'];
+        final match = tag == null || tag.isEmpty
+            ? _memos.where((m) => m['user_id'] == user)
+            : _memos.where((m) =>
+                m['user_id'] == user &&
+                (m['tags'] as List<String>).contains(tag));
+        return _json(200, {'memos': match.toList()});
+      });
     } else if (path == '/api/v1/memos' && request.method == 'POST') {
       r = await _withAuth(request, (user) => _createMemo(request, user));
     } else if (resource == 'memos' && request.method == 'PUT') {
       r = await _withAuth(request, (user) => _updateMemo(request, user, resourceId));
     } else if (resource == 'memos' && request.method == 'DELETE') {
       r = await _withAuth(request, (user) async => _deleteMemo(user, resourceId));
+    } else if (path == '/api/v1/tags' && request.method == 'GET') {
+      r = await _withAuth(request, (user) async {
+        final names = <String>{
+          for (final m in _memos.where((m) => m['user_id'] == user))
+            ...(m['tags'] as List<String>),
+        }.toList()
+          ..sort();
+        return _json(200, {'tags': names});
+      });
     } else if (path == '/api/v1/users' && request.method == 'GET') {
       r = await _withAuth(request, (user) async => _listUsers(user));
     } else if (path == '/api/v1/users' && request.method == 'POST') {
@@ -277,6 +308,11 @@ class FakeMeridianServer {
     final body = _body(request);
     final title = (body['title'] as String? ?? '').trim();
     if (title.isEmpty) return _json(400, {'error': 'invalid_request'});
+    List<String>? tags;
+    if (body['tags'] is List) {
+      tags = _normalizeTags(body['tags'] as List);
+      if (tags == null) return _json(400, {'error': 'invalid_tag'});
+    }
     final categoryId = _resolveCategoryId(body);
     if (categoryId == -1) return _json(400, {'error': 'unknown_category'});
     final now = DateTime.now().toUtc().toIso8601String();
@@ -286,6 +322,7 @@ class FakeMeridianServer {
       'category_id': categoryId,
       'title': title,
       'body': body['body'] as String? ?? '',
+      'tags': tags ?? <String>[],
       'created_at': now,
       'updated_at': now,
     };
@@ -299,12 +336,18 @@ class FakeMeridianServer {
     final body = _body(request);
     final title = (body['title'] as String? ?? '').trim();
     if (title.isEmpty) return _json(400, {'error': 'invalid_request'});
+    List<String>? tags;
+    if (body['tags'] is List) {
+      tags = _normalizeTags(body['tags'] as List);
+      if (tags == null) return _json(400, {'error': 'invalid_tag'});
+    }
     final categoryId =
         _resolveCategoryId(body, current: _memos[idx]['category_id'] as int);
     if (categoryId == -1) return _json(400, {'error': 'unknown_category'});
     _memos[idx]['title'] = title;
     _memos[idx]['body'] = body['body'] as String? ?? '';
     _memos[idx]['category_id'] = categoryId;
+    if (tags != null) _memos[idx]['tags'] = tags;
     _memos[idx]['updated_at'] = DateTime.now().toUtc().toIso8601String();
     return _json(200, _memos[idx]);
   }

@@ -20,7 +20,12 @@ class MemoEditScreen extends StatefulWidget {
 class _MemoEditScreenState extends State<MemoEditScreen> {
   late final TextEditingController _title;
   late final TextEditingController _body;
+  late final TextEditingController _tagField;
   late Future<List<Category>> _categories;
+  // The memo's tags, edited locally and saved as a whole; plus the user's
+  // own tag history, the autocomplete source (T4).
+  List<String> _tags = const [];
+  List<String> _knownTags = const [];
   int? _categoryId;
   bool _busy = false;
 
@@ -29,15 +34,57 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     super.initState();
     _title = TextEditingController(text: widget.memo?.title ?? '');
     _body = TextEditingController(text: widget.memo?.body ?? '');
+    _tagField = TextEditingController();
+    _tags = List.of(widget.memo?.tags ?? const <String>[]);
     _categoryId = widget.memo?.categoryId;
     _categories = widget.api.categories(widget.token);
+    _loadKnownTags();
+  }
+
+  void _loadKnownTags() {
+    widget.api.tags(widget.token).then((tags) {
+      if (mounted) setState(() => _knownTags = tags);
+    }).catchError((_) {
+      // Suggestions are a convenience: an empty history beats a broken
+      // editor.
+      if (mounted) setState(() => _knownTags = const []);
+    });
   }
 
   @override
   void dispose() {
     _title.dispose();
     _body.dispose();
+    _tagField.dispose();
     super.dispose();
+  }
+
+  /// Same rules as the server (T4): trimmed plain text, at most 50 runes,
+  /// duplicates collapse.
+  void _addTag() {
+    final name = _tagField.text.trim();
+    if (name.isEmpty) return;
+    if (name.runes.length > 50) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('标签最多 50 字')));
+      return;
+    }
+    setState(() {
+      if (!_tags.contains(name)) _tags.add(name);
+      _tagField.clear();
+    });
+  }
+
+  void _removeTag(String name) {
+    setState(() => _tags.remove(name));
+  }
+
+  List<String> get _suggestions {
+    final input = _tagField.text.trim();
+    if (input.isEmpty) return const [];
+    return [
+      for (final t in _knownTags)
+        if (!_tags.contains(t) && t.startsWith(input)) t,
+    ];
   }
 
   Future<void> _save() async {
@@ -50,10 +97,11 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     try {
       if (widget.memo == null) {
         await widget.api.createMemo(widget.token,
-            title: title, body: _body.text, categoryId: _categoryId);
+            title: title, body: _body.text, categoryId: _categoryId, tags: _tags);
       } else {
         await widget.api.updateMemo(widget.token,
-            id: widget.memo!.id, title: title, body: _body.text, categoryId: _categoryId);
+            id: widget.memo!.id, title: title, body: _body.text,
+            categoryId: _categoryId, tags: _tags);
       }
       if (mounted) Navigator.of(context).pop();
     } on ApiException catch (e) {
@@ -166,6 +214,8 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
               },
             ),
             const SizedBox(height: 12),
+            _buildTagSection(),
+            const SizedBox(height: 12),
             Expanded(
               child: TextField(
                 controller: _body,
@@ -184,6 +234,54 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Free-form tags typed by hand (T4): chips for the tags this memo will
+  /// carry, plus autocomplete suggestions drawn from the user's own tag
+  /// history. Tags are plain text by definition — they are rendered
+  /// verbatim, never as Markdown.
+  Widget _buildTagSection() {
+    final suggestions = _suggestions;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _tagField,
+          key: const Key('tag_field'),
+          decoration: const InputDecoration(labelText: '标签', hintText: '输入后回车添加'),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _addTag(),
+          onChanged: (_) => setState(() {}),
+          enabled: !_busy,
+        ),
+        if (_tags.isNotEmpty || suggestions.isNotEmpty)
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final t in _tags)
+                InputChip(
+                  key: Key('tag_chip_$t'),
+                  label: Text(t),
+                  deleteIcon: const Icon(Icons.cancel),
+                  onDeleted: _busy ? null : () => _removeTag(t),
+                ),
+              for (final t in suggestions)
+                ActionChip(
+                  key: Key('tag_suggestion_$t'),
+                  label: Text(t),
+                  tooltip: '添加标签 $t',
+                  onPressed: _busy ? null : () {
+                    setState(() {
+                      _tags.add(t);
+                      _tagField.clear();
+                    });
+                  },
+                ),
+            ],
+          ),
+      ],
     );
   }
 

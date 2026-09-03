@@ -14,6 +14,9 @@ type Memo struct {
 	// CategoryID names the one taxonomy category this memo lives in
 	// (ADR-0002). It is always set: never zero.
 	CategoryID int64 `json:"category_id"`
+	// Tags are the user's own short organizing hints (T4), in the order they
+	// were saved; never nil.
+	Tags []string `json:"tags"`
 	// CreatedAt and UpdatedAt carry JSON tags so the API can serve store
 	// structs directly; time.Time marshals as RFC3339.
 	CreatedAt time.Time `json:"created_at"`
@@ -33,12 +36,65 @@ func scanMemo(row interface{ Scan(...any) error }) (Memo, error) {
 	return m, nil
 }
 
+// scanMemos drains a memo query; tags are attached separately by attachTags.
+func scanMemos(rows *sql.Rows) ([]Memo, error) {
+	defer rows.Close()
+	var out []Memo
+	for rows.Next() {
+		m, err := scanMemo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// attachTags fills in each memo's tag list with one query, preserving the
+// saved order. Lists are never nil.
+func (s *Store) attachTags(userID int64, memos []Memo) error {
+	for i := range memos {
+		memos[i].Tags = []string{}
+	}
+	if len(memos) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(`
+		SELECT t.memo_id, t.name
+		FROM memo_tags t JOIN memos m ON m.id = t.memo_id
+		WHERE m.user_id = ?
+		ORDER BY t.rowid`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	index := make(map[int64]int, len(memos))
+	for i := range memos {
+		index[memos[i].ID] = i
+	}
+	for rows.Next() {
+		var memoID int64
+		var name string
+		if err := rows.Scan(&memoID, &name); err != nil {
+			return err
+		}
+		if i, ok := index[memoID]; ok {
+			memos[i].Tags = append(memos[i].Tags, name)
+		}
+	}
+	return rows.Err()
+}
+
 // CreateMemo inserts a memo owned by userID. categoryID 0 means "no explicit
 // category": the memo falls back to the built-in 未分类. Any other value must
-// name an existing category, or ErrCategoryNotFound comes back.
-func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64) (*Memo, error) {
+// name an existing category, or ErrCategoryNotFound comes back. tags may be
+// nil (no tags) and is normalized; ErrInvalidTag reports bad names.
+func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, tags []string) (*Memo, error) {
+	names, err := normalizeTags(tags)
+	if err != nil {
+		return nil, err
+	}
 	if categoryID == 0 {
-		var err error
 		if categoryID, err = s.builtinCategoryID(); err != nil {
 			return nil, err
 		}
@@ -48,7 +104,12 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64) (
 		return nil, ErrCategoryNotFound
 	}
 	ts := now()
-	res, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
 		"INSERT INTO memos (user_id, category_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
 		userID, categoryID, title, body, ts, ts,
 	)
@@ -59,12 +120,19 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64) (
 	if err != nil {
 		return nil, err
 	}
+	if err := insertMemoTags(tx, id, names); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return &Memo{
 		ID:         id,
 		UserID:     userID,
 		Title:      title,
 		Body:       body,
 		CategoryID: categoryID,
+		Tags:       names,
 		CreatedAt:  parseTime(ts),
 		UpdatedAt:  parseTime(ts),
 	}, nil
@@ -79,16 +147,35 @@ func (s *Store) MemosByUser(userID int64) ([]Memo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Memo
-	for rows.Next() {
-		m, err := scanMemo(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
+	memos, err := scanMemos(rows)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	if err := s.attachTags(userID, memos); err != nil {
+		return nil, err
+	}
+	return memos, nil
+}
+
+// MemosByUserAndTag lists a user's memos carrying tag, newest first; a tag
+// no memo carries is simply a miss. The match is on the tag alone — the body
+// never has to mention the word (T4).
+func (s *Store) MemosByUserAndTag(userID int64, tag string) ([]Memo, error) {
+	rows, err := s.db.Query(
+		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND id IN (SELECT memo_id FROM memo_tags WHERE name = ?) ORDER BY created_at DESC, id DESC",
+		userID, tag,
+	)
+	if err != nil {
+		return nil, err
+	}
+	memos, err := scanMemos(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachTags(userID, memos); err != nil {
+		return nil, err
+	}
+	return memos, nil
 }
 
 // MemoByID fetches one memo; userID scopes the lookup so another user's
@@ -104,13 +191,26 @@ func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 	if err != nil {
 		return nil, err
 	}
+	names, err := s.memoTags(m.ID)
+	if err != nil {
+		return nil, err
+	}
+	m.Tags = names
 	return &m, nil
 }
 
-// UpdateMemo rewrites title and body of a user's own memo, and moves it to
-// categoryID when that is nonzero (it must exist); 0 leaves the category as
-// it was.
-func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID int64) (*Memo, error) {
+// UpdateMemo rewrites title and body of a user's own memo, moves it to
+// categoryID when that is nonzero (it must exist; 0 leaves the category as
+// it was), and replaces the tag set when tags is non-nil — an empty list
+// removes every tag. nil leaves the tags as they were.
+func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID int64, tags []string) (*Memo, error) {
+	var names []string
+	if tags != nil {
+		var err error
+		if names, err = normalizeTags(tags); err != nil {
+			return nil, err
+		}
+	}
 	if categoryID != 0 {
 		if ok, err := s.categoryExists(categoryID); err != nil {
 			return nil, err
@@ -118,7 +218,12 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 			return nil, ErrCategoryNotFound
 		}
 	}
-	res, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
 		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, updated_at = ? WHERE id = ? AND user_id = ?",
 		title, body, categoryID, categoryID, now(), memoID, userID,
 	)
@@ -130,11 +235,23 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 	} else if n == 0 {
 		return nil, ErrNotFound
 	}
+	if names != nil {
+		if _, err := tx.Exec("DELETE FROM memo_tags WHERE memo_id = ?", memoID); err != nil {
+			return nil, err
+		}
+		if err := insertMemoTags(tx, memoID, names); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.MemoByID(userID, memoID)
 }
 
 // DeleteMemo removes a memo outright; the recycle bin arrives in a later
-// ticket and will replace this hard delete with a soft one.
+// ticket and will replace this hard delete with a soft one. Its tags go with
+// it via the foreign key.
 func (s *Store) DeleteMemo(userID, memoID int64) error {
 	res, err := s.db.Exec("DELETE FROM memos WHERE id = ? AND user_id = ?", memoID, userID)
 	if err != nil {
