@@ -58,7 +58,7 @@ class MeridianApi {
 
   /// Creates the first administrator; the server closes the wizard forever
   /// afterwards (ADR-0001).
-  Future<Session> setupAdmin(String username, String password) async {
+  Future<Session> setupAdministrator(String username, String password) async {
     final body = await _request('POST', '/api/v1/setup/admin',
         body: {'username': username, 'password': password});
     return Session.fromJson(body);
@@ -112,14 +112,12 @@ class Session {
 class User {
   final int id;
   final String username;
-  final String role;
 
-  User({required this.id, required this.username, required this.role});
+  User({required this.id, required this.username});
 
   factory User.fromJson(Map<String, dynamic> json) => User(
         id: json['id'] as int,
         username: json['username'] as String,
-        role: json['role'] as String,
       );
 }
 
@@ -127,23 +125,13 @@ class Memo {
   final int id;
   final String title;
   final String body;
-  final DateTime? createdAt;
-  final DateTime? updatedAt;
 
-  Memo({
-    required this.id,
-    required this.title,
-    required this.body,
-    this.createdAt,
-    this.updatedAt,
-  });
+  Memo({required this.id, required this.title, required this.body});
 
   factory Memo.fromJson(Map<String, dynamic> json) => Memo(
         id: json['id'] as int,
         title: json['title'] as String,
         body: json['body'] as String? ?? '',
-        createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
-        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
       );
 }
 

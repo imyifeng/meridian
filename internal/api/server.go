@@ -21,7 +21,7 @@ func NewHandler(st *store.Store) http.Handler {
 	s := &server{st: st}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/instance", s.getInstance)
-	mux.HandleFunc("POST /api/v1/setup/admin", s.setupAdmin)
+	mux.HandleFunc("POST /api/v1/setup/administrator", s.setupAdministrator)
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.Handle("GET /api/v1/memos", s.requireAuth(http.HandlerFunc(s.listMemos)))
 	mux.Handle("POST /api/v1/memos", s.requireAuth(http.HandlerFunc(s.createMemo)))

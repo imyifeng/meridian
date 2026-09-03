@@ -37,8 +37,8 @@ func HashPassword(password string) (string, error) {
 	return string(h), err
 }
 
-// CreateUser adds a non-first account. The admin user-management API is a
-// later ticket; for now tests seed extra accounts through this method.
+// CreateUser adds a non-first user. The administrator user-management API
+// is a later ticket; for now tests seed extra users through this method.
 func (s *Store) CreateUser(username, password, role string) (*User, error) {
 	username = strings.TrimSpace(username)
 	hash, err := HashPassword(password)
@@ -50,7 +50,9 @@ func (s *Store) CreateUser(username, password, role string) (*User, error) {
 		username, hash, role, now(), now(),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
+		// The single pooled connection serializes writes, so a duplicate
+		// can only be a username that was already there.
+		if s.usernameExists(username) {
 			return nil, ErrUsernameTaken
 		}
 		return nil, err
@@ -60,6 +62,12 @@ func (s *Store) CreateUser(username, password, role string) (*User, error) {
 		return nil, err
 	}
 	return &User{ID: id, Username: username, Role: role}, nil
+}
+
+func (s *Store) usernameExists(username string) bool {
+	var one int
+	err := s.db.QueryRow("SELECT 1 FROM users WHERE username = ?", username).Scan(&one)
+	return err == nil
 }
 
 // SetupAdministrator creates the instance's first user inside the same

@@ -19,10 +19,6 @@ type Memo struct {
 
 // CreateMemo inserts a memo owned by userID.
 func (s *Store) CreateMemo(userID int64, title, body string) (*Memo, error) {
-	return s.insertMemo(userID, title, body)
-}
-
-func (s *Store) insertMemo(userID int64, title, body string) (*Memo, error) {
 	ts := now()
 	res, err := s.db.Exec(
 		"INSERT INTO memos (user_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",

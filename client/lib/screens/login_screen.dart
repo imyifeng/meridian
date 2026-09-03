@@ -29,7 +29,7 @@ class LoginScreen extends StatelessWidget {
           final session = await api.login(username, password);
           await onAuthenticated(session);
         },
-        errorMessage: (e) {
+        onError: (e) {
           if (e.statusCode == 401) return '用户名或密码错误';
           if (e.isUnreachable) return '无法连接服务器，请检查服务器地址';
           return '登录失败，请重试';

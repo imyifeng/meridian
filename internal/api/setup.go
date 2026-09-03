@@ -19,10 +19,10 @@ func (s *server) getInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"initialized": initialized})
 }
 
-// setupAdmin creates the instance's first administrator. Once the instance
+// setupAdministrator creates the instance's first administrator. Once the instance
 // is initialized this endpoint is closed forever (ADR-0001): there is no
 // self-registration, later users are created by an administrator.
-func (s *server) setupAdmin(w http.ResponseWriter, r *http.Request) {
+func (s *server) setupAdministrator(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`

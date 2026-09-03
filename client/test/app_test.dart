@@ -76,14 +76,41 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('create_admin_button')), findsOneWidget);
+    expect(find.byKey(const Key('create_administrator_button')), findsOneWidget);
     await tester.enterText(find.byKey(const Key('username_field')), 'boss');
     await tester.enterText(find.byKey(const Key('password_field')), 'first password');
-    await tester.tap(find.byKey(const Key('create_admin_button')));
+    await tester.tap(find.byKey(const Key('create_administrator_button')));
     await tester.pumpAndSettle();
 
     // Straight into the app as the newly minted administrator.
     expect(find.text('暂无备忘录'), findsOneWidget);
+  });
+
+  testWidgets('实例被他人初始化后，向导把用户送往登录页', (tester) async {
+    final fake = FakeMeridianServer(); // uninitialized when the app boots
+
+    await tester.pumpWidget(
+      MeridianApp(
+        baseUrl: fake.url,
+        tokenStore: InMemoryTokenStore(),
+        apiClient: fake.client,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('create_administrator_button')), findsOneWidget);
+
+    // Someone else completes the wizard before this user submits.
+    fake.registerUser('someoneelse', 'their password');
+
+    await tester.enterText(find.byKey(const Key('username_field')), 'boss');
+    await tester.enterText(find.byKey(const Key('password_field')), 'first password');
+    await tester.tap(find.byKey(const Key('create_administrator_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('实例已初始化过，请直接登录'), findsNothing,
+        reason: 'the wizard screen is replaced by login');
+    expect(find.byKey(const Key('login_button')), findsOneWidget);
+    expect(find.byKey(const Key('create_administrator_button')), findsNothing);
   });
 
   testWidgets('凭据与备忘录在重开应用后仍在', (tester) async {

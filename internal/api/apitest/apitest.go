@@ -18,14 +18,14 @@ import (
 // TCP socket, backed by a SQLite file in a temp dir. Restart closes and
 // reopens the database on the same file, standing in for a process restart.
 type Env struct {
-	t     *testing.T
-	dir   string
-	st    *store.Store
-	srv   *httptest.Server
-	admin *Account
+	t             *testing.T
+	dir           string
+	st            *store.Store
+	srv           *httptest.Server
+	administrator *Credentials
 }
 
-type Account struct {
+type Credentials struct {
 	Username string
 	Password string
 	Token    string
@@ -57,7 +57,7 @@ func (e *Env) Close() {
 func (e *Env) URL() string { return e.srv.URL }
 
 // Store exposes the underlying store for fixture seeding (e.g. extra
-// accounts) before the admin user-management API exists.
+// users) before the administrator user-management API exists.
 func (e *Env) Store() *store.Store { return e.st }
 
 func (e *Env) Restart() {
@@ -106,12 +106,12 @@ func (e *Env) Call(method, path, token string, body, out any) *http.Response {
 	return resp
 }
 
-// SetupAdmin runs the setup wizard once and remembers the resulting
-// administrator account.
-func (e *Env) SetupAdmin(username, password string) *Account {
+// SetupAdministrator runs the setup wizard once and remembers the resulting
+// administrator.
+func (e *Env) SetupAdministrator(username, password string) *Credentials {
 	e.t.Helper()
-	if e.admin != nil {
-		e.t.Fatal("SetupAdmin called twice on one Env")
+	if e.administrator != nil {
+		e.t.Fatal("SetupAdministrator called twice on one Env")
 	}
 	var out struct {
 		Token string `json:"token"`
@@ -119,19 +119,19 @@ func (e *Env) SetupAdmin(username, password string) *Account {
 			ID int64 `json:"id"`
 		} `json:"user"`
 	}
-	resp := e.Call("POST", "/api/v1/setup/admin", "", map[string]string{"username": username, "password": password}, &out)
+	resp := e.Call("POST", "/api/v1/setup/administrator", "", map[string]string{"username": username, "password": password}, &out)
 	if resp.StatusCode != http.StatusCreated {
 		e.t.Fatalf("setup admin: status %d, want 201", resp.StatusCode)
 	}
-	e.admin = &Account{Username: username, Password: password, Token: out.Token, ID: out.User.ID}
-	return e.admin
+	e.administrator = &Credentials{Username: username, Password: password, Token: out.Token, ID: out.User.ID}
+	return e.administrator
 }
 
 // Admin returns the instance's administrator, creating it on first use.
-func (e *Env) Admin() *Account {
+func (e *Env) Administrator() *Credentials {
 	e.t.Helper()
-	if e.admin == nil {
-		return e.SetupAdmin("admin", "correct horse")
+	if e.administrator == nil {
+		return e.SetupAdministrator("admin", "correct horse")
 	}
-	return e.admin
+	return e.administrator
 }

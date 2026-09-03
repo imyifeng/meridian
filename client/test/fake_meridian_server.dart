@@ -46,9 +46,14 @@ class FakeMeridianServer {
       r = await _setup(request);
     } else if (path == '/api/v1/auth/login' && request.method == 'POST') {
       r = await _login(request);
+    } else if (memoId != null && request.method == 'GET') {
+      r = await _withAuth(request, (user) async {
+        final match = _memos.where((m) => m['id'] == memoId && m['user_id'] == user).toList();
+        return match.isEmpty ? _json(404, {'error': 'not_found'}) : _json(200, match.first);
+      });
     } else if (path == '/api/v1/memos' && request.method == 'GET') {
       r = await _withAuth(request, (user) async => _json(200, {
-            'memos': _memos.where((m) => m['user'] == user).toList(),
+            'memos': _memos.where((m) => m['user_id'] == user).toList(),
           }));
     } else if (path == '/api/v1/memos' && request.method == 'POST') {
       r = await _withAuth(request, (user) => _createMemo(request, user));
@@ -98,7 +103,7 @@ class FakeMeridianServer {
     final now = DateTime.now().toUtc().toIso8601String();
     final memo = {
       'id': _nextMemoId++,
-      'user': user,
+      'user_id': user,
       'title': title,
       'body': body['body'] as String? ?? '',
       'created_at': now,
@@ -109,7 +114,7 @@ class FakeMeridianServer {
   }
 
   Future<http.Response> _updateMemo(http.Request request, String user, int id) async {
-    final idx = _memos.indexWhere((m) => m['id'] == id && m['user'] == user);
+    final idx = _memos.indexWhere((m) => m['id'] == id && m['user_id'] == user);
     if (idx == -1) return _json(404, {'error': 'not_found'});
     final body = _body(request);
     final title = (body['title'] as String? ?? '').trim();
@@ -121,7 +126,7 @@ class FakeMeridianServer {
   }
 
   http.Response _deleteMemo(String user, int id) {
-    final idx = _memos.indexWhere((m) => m['id'] == id && m['user'] == user);
+    final idx = _memos.indexWhere((m) => m['id'] == id && m['user_id'] == user);
     if (idx == -1) return _json(404, {'error': 'not_found'});
     _memos.removeAt(idx);
     return http.Response('', 204);

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import 'memo_edit_screen.dart';
 
-/// The memo list: every memo of the signed-in account, newest first.
+/// The memo list: every memo of the signed-in user, newest first.
 class MemosScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;

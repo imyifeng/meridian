@@ -39,7 +39,7 @@ func TestSetupWizardCreatesFirstAdministrator(t *testing.T) {
 			Role     string `json:"role"`
 		} `json:"user"`
 	}
-	resp := env.Call("POST", "/api/v1/setup/admin", "", map[string]string{"username": "yifeng", "password": "correct horse"}, &out)
+	resp := env.Call("POST", "/api/v1/setup/administrator", "", map[string]string{"username": "yifeng", "password": "correct horse"}, &out)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("setup: status %d, want 201", resp.StatusCode)
 	}
@@ -69,15 +69,15 @@ func TestSetupWizardCreatesFirstAdministrator(t *testing.T) {
 
 func TestSetupWizardLocksForeverAfterCompletion(t *testing.T) {
 	env := apitest.NewEnv(t)
-	env.SetupAdmin("yifeng", "correct horse")
+	env.SetupAdministrator("yifeng", "correct horse")
 
-	if resp := env.Call("POST", "/api/v1/setup/admin", "", map[string]string{"username": "latecomer", "password": "x"}, nil); resp.StatusCode != http.StatusConflict {
+	if resp := env.Call("POST", "/api/v1/setup/administrator", "", map[string]string{"username": "latecomer", "password": "x"}, nil); resp.StatusCode != http.StatusConflict {
 		t.Fatalf("second setup: status %d, want 409", resp.StatusCode)
 	}
 
 	// Still locked after a restart: closure is permanent, not in-memory.
 	env.Restart()
-	if resp := env.Call("POST", "/api/v1/setup/admin", "", map[string]string{"username": "latecomer", "password": "x"}, nil); resp.StatusCode != http.StatusConflict {
+	if resp := env.Call("POST", "/api/v1/setup/administrator", "", map[string]string{"username": "latecomer", "password": "x"}, nil); resp.StatusCode != http.StatusConflict {
 		t.Fatalf("setup after restart: status %d, want 409", resp.StatusCode)
 	}
 }
@@ -90,7 +90,7 @@ func TestSetupWizardRejectsBlankFields(t *testing.T) {
 		"blank password": {"username": "yifeng", "password": ""},
 	}
 	for name, body := range cases {
-		if resp := env.Call("POST", "/api/v1/setup/admin", "", body, nil); resp.StatusCode != http.StatusBadRequest {
+		if resp := env.Call("POST", "/api/v1/setup/administrator", "", body, nil); resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
 		}
 	}
@@ -98,7 +98,7 @@ func TestSetupWizardRejectsBlankFields(t *testing.T) {
 
 func TestLogin(t *testing.T) {
 	env := apitest.NewEnv(t)
-	env.SetupAdmin("yifeng", "correct horse")
+	env.SetupAdministrator("yifeng", "correct horse")
 
 	var out struct {
 		Token string `json:"token"`
@@ -117,7 +117,7 @@ func TestLogin(t *testing.T) {
 
 func TestLoginRejectsBadCredentials(t *testing.T) {
 	env := apitest.NewEnv(t)
-	env.SetupAdmin("yifeng", "correct horse")
+	env.SetupAdministrator("yifeng", "correct horse")
 
 	cases := map[string]map[string]string{
 		"wrong password": {"username": "yifeng", "password": "wrong"},
@@ -132,7 +132,7 @@ func TestLoginRejectsBadCredentials(t *testing.T) {
 
 func TestRequestsRequireValidToken(t *testing.T) {
 	env := apitest.NewEnv(t)
-	env.SetupAdmin("yifeng", "correct horse")
+	env.SetupAdministrator("yifeng", "correct horse")
 
 	cases := map[string]struct {
 		method string

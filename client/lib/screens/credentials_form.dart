@@ -10,7 +10,8 @@ class CredentialsForm extends StatefulWidget {
   final String submitLabel;
   final String buttonKey;
   final Future<void> Function(String username, String password) onSubmit;
-  final String? Function(ApiException error)? errorMessage;
+  /// Maps an API failure to a message; may also react to it (e.g. navigate).
+  final String? Function(ApiException error)? onError;
 
   const CredentialsForm({
     super.key,
@@ -18,7 +19,7 @@ class CredentialsForm extends StatefulWidget {
     required this.submitLabel,
     required this.buttonKey,
     required this.onSubmit,
-    this.errorMessage,
+    this.onError,
   });
 
   @override
@@ -47,7 +48,7 @@ class _CredentialsFormState extends State<CredentialsForm> {
       await widget.onSubmit(_username.text.trim(), _password.text);
     } on ApiException catch (e) {
       setState(() {
-        _error = widget.errorMessage?.call(e) ?? '操作失败，请重试';
+        _error = widget.onError?.call(e) ?? '操作失败，请重试';
       });
     } finally {
       if (mounted) setState(() => _busy = false);

@@ -11,11 +11,17 @@ class SetupScreen extends StatelessWidget {
   final MeridianApi api;
   final Future<void> Function(Session session) onAuthenticated;
 
+  /// The wizard only closes by completing setup — or by discovering the
+  /// instance was initialized elsewhere mid-wizard (409), in which case
+  /// the user must be sent to login.
+  final VoidCallback onAlreadyInitialized;
+
   const SetupScreen({
     super.key,
     required this.serverAddress,
     required this.api,
     required this.onAuthenticated,
+    required this.onAlreadyInitialized,
   });
 
   @override
@@ -25,13 +31,16 @@ class SetupScreen extends StatelessWidget {
       body: CredentialsForm(
         serverAddress: serverAddress,
         submitLabel: '创建管理员',
-        buttonKey: 'create_admin_button',
+        buttonKey: 'create_administrator_button',
         onSubmit: (username, password) async {
-          final session = await api.setupAdmin(username, password);
+          final session = await api.setupAdministrator(username, password);
           await onAuthenticated(session);
         },
-        errorMessage: (e) {
-          if (e.statusCode == 409) return '实例已初始化过，请直接登录';
+        onError: (e) {
+          if (e.statusCode == 409) {
+            onAlreadyInitialized();
+            return '实例已初始化过，请直接登录';
+          }
           if (e.isUnreachable) return '无法连接服务器，请检查服务器地址';
           return '创建失败，请重试';
         },

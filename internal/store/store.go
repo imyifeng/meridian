@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("not found")
-	ErrAlreadyInitialized  = errors.New("instance already initialized")
-	ErrUsernameTaken       = errors.New("username taken")
-	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrNotFound           = errors.New("not found")
+	ErrAlreadyInitialized = errors.New("instance already initialized")
+	ErrUsernameTaken      = errors.New("username taken")
+	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 
 // Store is a handle to one Meridian instance's SQLite database.
