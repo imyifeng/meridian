@@ -113,6 +113,55 @@ void main() {
     expect(find.byKey(const Key('create_administrator_button')), findsNothing);
   });
 
+  testWidgets('备忘录默认归入未分类，可改到既有分类', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.createCategory('工作');
+
+    await tester.pumpWidget(
+      MeridianApp(
+        baseUrl: fake.url,
+        tokenStore: InMemoryTokenStore(),
+        apiClient: fake.client,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('username_field')), 'yifeng');
+    await tester.enterText(find.byKey(const Key('password_field')), 'correct horse');
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+
+    // A new memo: the category picker only offers the fixed taxonomy, with
+    // the built-in 未分类 preselected.
+    await tester.tap(find.byKey(const Key('new_memo_button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('category_dropdown')), findsOneWidget);
+    expect(find.text('未分类'), findsOneWidget);
+    expect(find.text('工作'), findsNothing, reason: '只能选既有分类，不能自创');
+
+    await tester.enterText(find.byKey(const Key('title_field')), '购物清单');
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    // Back on the list, the memo is filed under 未分类.
+    expect(find.text('购物清单'), findsOneWidget);
+    expect(find.text('未分类'), findsOneWidget);
+
+    // Move it to 工作 through the picker.
+    await tester.tap(find.text('购物清单'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('category_dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('工作').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('购物清单'), findsOneWidget);
+    expect(find.text('工作'), findsOneWidget, reason: '列表显示新分类');
+    expect(find.text('未分类'), findsNothing);
+  });
+
   testWidgets('凭据与备忘录在重开应用后仍在', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');

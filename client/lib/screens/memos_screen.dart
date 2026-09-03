@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import 'memo_edit_screen.dart';
 
-/// The memo list: every memo of the signed-in user, newest first.
+/// The memo list: every memo of the signed-in user, newest first, each with
+/// its taxonomy category (ADR-0002).
 class MemosScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
@@ -21,17 +22,23 @@ class MemosScreen extends StatefulWidget {
 }
 
 class _MemosScreenState extends State<MemosScreen> {
-  late Future<List<Memo>> _future;
+  late Future<MemoBoard> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.api.memos(widget.token);
+    _future = _load();
+  }
+
+  Future<MemoBoard> _load() async {
+    final memos = await widget.api.memos(widget.token);
+    final categories = await widget.api.categories(widget.token);
+    return MemoBoard(memos, {for (final c in categories) c.id: c.name});
   }
 
   void _reload() {
     setState(() {
-      _future = widget.api.memos(widget.token);
+      _future = _load();
     });
   }
 
@@ -57,7 +64,7 @@ class _MemosScreenState extends State<MemosScreen> {
         onPressed: _openEditor,
         child: const Icon(Icons.add),
       ),
-      body: FutureBuilder<List<Memo>>(
+      body: FutureBuilder<MemoBoard>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -75,7 +82,8 @@ class _MemosScreenState extends State<MemosScreen> {
               ),
             );
           }
-          final memos = snapshot.data ?? const <Memo>[];
+          final memos = snapshot.data?.memos ?? const <Memo>[];
+          final categoryNames = snapshot.data?.categoryNames ?? const {};
           if (memos.isEmpty) {
             return const Center(child: Text('暂无备忘录'));
           }
@@ -87,6 +95,7 @@ class _MemosScreenState extends State<MemosScreen> {
               return ListTile(
                 title: Text(memo.title),
                 subtitle: memo.body.isEmpty ? null : Text(memo.body, maxLines: 1, overflow: TextOverflow.ellipsis),
+                trailing: Text(categoryNames[memo.categoryId] ?? ''),
                 onTap: () => _openEditor(memo),
               );
             },
@@ -95,4 +104,11 @@ class _MemosScreenState extends State<MemosScreen> {
       ),
     );
   }
+}
+
+class MemoBoard {
+  final List<Memo> memos;
+  final Map<int, String> categoryNames;
+
+  MemoBoard(this.memos, this.categoryNames);
 }
