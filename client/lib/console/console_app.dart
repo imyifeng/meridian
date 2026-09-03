@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import 'categories_screen.dart';
+import 'users_screen.dart';
 
 /// The Web 管理控制台 shell: sign in with an instance account, then manage
-/// the category taxonomy. The server hosts this build at /console/, so every
-/// API path is same-origin and no server-address field is needed — unlike
-/// the Windows/Android client, the browser session token lives in memory
-/// only.
+/// the category taxonomy and the instance's users. The server hosts this
+/// build at /console/, so every API path is same-origin and no server-address
+/// field is needed — unlike the Windows/Android client, the browser session
+/// token lives in memory only.
 class ConsoleApp extends StatefulWidget {
   /// Same-origin by default; inject a base URL (and client) in tests.
   final MeridianApi? api;
@@ -118,11 +119,37 @@ class _ConsoleAppState extends State<ConsoleApp> {
   }
 
   Widget _consoleScaffold() {
-    return CategoriesScreen(
-      api: _api,
-      token: _session!.token,
-      canManage: _session!.user.isAdministrator,
-      onSignOut: _signOut,
+    final session = _session!;
+    final signOut = IconButton(
+      icon: const Icon(Icons.logout),
+      tooltip: '退出登录',
+      onPressed: _signOut,
+    );
+    // User management is administrator business: everyone else gets the
+    // taxonomy view alone.
+    if (!session.user.isAdministrator) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Meridian 管理控制台'), actions: [signOut]),
+        body: CategoriesScreen(api: _api, token: session.token, canManage: false),
+      );
+    }
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Meridian 管理控制台'),
+          actions: [signOut],
+          bottom: const TabBar(
+            tabs: [Tab(text: '分类管理'), Tab(text: '用户管理')],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            CategoriesScreen(api: _api, token: session.token, canManage: true),
+            UsersScreen(api: _api, token: session.token),
+          ],
+        ),
+      ),
     );
   }
 }

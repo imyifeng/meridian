@@ -5,10 +5,10 @@ import 'package:http/testing.dart';
 
 /// In-process fake of the Meridian HTTP API, same shape as the real Go
 /// server: /api/v1/instance, /api/v1/setup/administrator, /api/v1/auth/login,
-/// /api/v1/categories, /api/v1/memos. UI seam tests drive the real widget
-/// tree with the app's real HTTP layer (request building, JSON, status
-/// handling) pointed at this fake via an injected http.Client — widget tests
-/// cannot open real sockets, but they can run this in-process handler.
+/// /api/v1/categories, /api/v1/memos, /api/v1/users. UI seam tests drive the
+/// real widget tree with the app's real HTTP layer (request building, JSON,
+/// status handling) pointed at this fake via an injected http.Client — widget
+/// tests cannot open real sockets, but they can run this in-process handler.
 class FakeMeridianServer {
   FakeMeridianServer() {
     // Same as the real instance: the built-in 未分类 always exists (ADR-0002).
@@ -18,8 +18,9 @@ class FakeMeridianServer {
   }
 
   bool initialized = false;
+  final Map<String, Map<String, dynamic>> _users =
+      {}; // username -> {id, username, role}
   final Map<String, String> _passwords = {}; // username -> password
-  final Map<String, String> _roles = {}; // username -> role
   final Map<String, String> _tokens = {}; // token -> username
   final Map<int, Map<String, dynamic>> _categories = {}; // id -> category
   final List<Map<String, dynamic>> _memos = [];
@@ -38,9 +39,32 @@ class FakeMeridianServer {
   void registerUser(String username, String password,
       {String role = 'administrator'}) {
     _passwords[username] = password;
-    _roles[username] = role;
+    _users[username] = {'id': _nextUserId++, 'username': username, 'role': role};
     initialized = true;
   }
+
+  /// Pre-seeds an ordinary account, standing in for console user management.
+  Map<String, dynamic> createUser(String username, String password) {
+    _passwords[username] = password;
+    final user = {'id': _nextUserId++, 'username': username, 'role': 'user'};
+    _users[username] = user;
+    return user;
+  }
+
+  /// Pre-seeds a memo owned by [username], standing in for that user's client.
+  void seedMemo(String username, String title) {
+    _memos.add({
+      'id': _nextMemoId++,
+      'user_id': username,
+      'category_id': uncategorizedId,
+      'title': title,
+      'body': '',
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  Map<String, dynamic> userByName(String username) => _users[username]!;
 
   /// Pre-seeds a category, standing in for console management.
   Map<String, dynamic> createCategory(String name) {
@@ -59,10 +83,12 @@ class FakeMeridianServer {
   Future<http.Response> _route(http.Request request) async {
     final path = request.url.path;
     final segments = path.split('/');
-    final resource =
-        segments.length == 5 && (segments[3] == 'memos' || segments[3] == 'categories')
-            ? segments[3]
-            : null;
+    final resource = segments.length == 5 &&
+            (segments[3] == 'memos' ||
+                segments[3] == 'categories' ||
+                segments[3] == 'users')
+        ? segments[3]
+        : null;
     final resourceId = resource != null ? int.tryParse(segments[4]) : null;
 
     http.Response r;
@@ -95,6 +121,17 @@ class FakeMeridianServer {
       r = await _withAuth(request, (user) => _updateMemo(request, user, resourceId));
     } else if (resource == 'memos' && request.method == 'DELETE') {
       r = await _withAuth(request, (user) async => _deleteMemo(user, resourceId));
+    } else if (path == '/api/v1/users' && request.method == 'GET') {
+      r = await _withAuth(request, (user) async => _listUsers(user));
+    } else if (path == '/api/v1/users' && request.method == 'POST') {
+      r = await _withAuth(request, (user) async => _createUser(request, user));
+    } else if (segments.length == 6 &&
+        segments[3] == 'users' &&
+        segments[5] == 'password' &&
+        request.method == 'PUT') {
+      r = await _withAuth(request, (user) async => _resetPassword(user, int.tryParse(segments[4]), request));
+    } else if (resource == 'users' && request.method == 'DELETE') {
+      r = await _withAuth(request, (user) async => _deleteUser(user, resourceId));
     } else {
       r = _json(404, {'error': 'not_found'});
     }
@@ -113,7 +150,7 @@ class FakeMeridianServer {
     final token = _newToken(username);
     return _json(201, {
       'token': token,
-      'user': {'id': _nextUserId++, 'username': username, 'role': 'administrator'},
+      'user': _users[username],
     });
   }
 
@@ -126,12 +163,68 @@ class FakeMeridianServer {
     }
     return _json(200, {
       'token': _newToken(username),
-      'user': {
-        'id': _nextUserId,
-        'username': username,
-        'role': _roles[username] ?? 'user',
-      },
+      'user': _users[username],
     });
+  }
+
+  http.Response _listUsers(String user) {
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+    final users = [
+      for (final u in _users.values)
+        {
+          ...u,
+          'memo_count': _memos.where((m) => m['user_id'] == u['username']).length,
+        },
+    ];
+    return _json(200, {'users': users});
+  }
+
+  http.Response _createUser(http.Request request, String user) {
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+    final body = _body(request);
+    final username = body['username'] as String? ?? '';
+    final password = body['password'] as String? ?? '';
+    if (username.trim().isEmpty || password.trim().isEmpty) {
+      return _json(400, {'error': 'invalid_request'});
+    }
+    if (_users.containsKey(username)) {
+      return _json(409, {'error': 'username_taken'});
+    }
+    final created = createUser(username, password);
+    return _json(201, created);
+  }
+
+  http.Response _resetPassword(String user, int? id, http.Request request) {
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+    final target = _usernameById(id);
+    if (target == null) return _json(404, {'error': 'not_found'});
+    final password = _body(request)['password'] as String? ?? '';
+    if (password.trim().isEmpty) return _json(400, {'error': 'invalid_request'});
+    _passwords[target] = password;
+    // Same as the real server: a reset ends sessions issued under the old
+    // password.
+    _tokens.removeWhere((_, name) => name == target);
+    return http.Response('', 204);
+  }
+
+  http.Response _deleteUser(String user, int? id) {
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+    final target = _usernameById(id);
+    if (target == null) return _json(404, {'error': 'not_found'});
+    if (target == user) return _json(409, {'error': 'self_delete'});
+    // Cascade: the account, its memos, and its sessions all disappear.
+    _users.remove(target);
+    _passwords.remove(target);
+    _memos.removeWhere((m) => m['user_id'] == target);
+    _tokens.removeWhere((_, name) => name == target);
+    return http.Response('', 204);
+  }
+
+  String? _usernameById(int? id) {
+    for (final u in _users.values) {
+      if (u['id'] == id) return u['username'] as String;
+    }
+    return null;
   }
 
   http.Response _createCategory(http.Request request, String user) {
@@ -166,7 +259,8 @@ class FakeMeridianServer {
     return http.Response('', 204);
   }
 
-  bool _isAdministrator(String user) => _roles[user] == 'administrator';
+  bool _isAdministrator(String user) =>
+      _users[user]?['role'] == 'administrator';
 
   /// Category assignment mirrors the real server: omitted → 未分类 (create)
   /// or unchanged (update); present but unknown → 400.
