@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 
-/// User management: the console's account pillar (ADR-0001 — every account
-/// after the first is created here). Deleting an account cascades all of its
+/// User management: the console's user pillar (ADR-0001 — every user
+/// after the first is created here). Deleting a user cascades all of their
 /// data server-side, so the confirmation dialog must name the memo count
 /// before the administrator commits.
 class UsersScreen extends StatefulWidget {
@@ -59,19 +59,16 @@ class _UsersScreenState extends State<UsersScreen> {
       _clearMessages();
     });
     try {
-      await widget.api.createUser(widget.token,
-          username: username, password: _password.text);
+      await widget.api.createUser(
+        widget.token,
+        username: username,
+        password: _password.text,
+      );
       _username.clear();
       _password.clear();
       _reload();
     } on ApiException catch (e) {
-      setState(() {
-        _error = switch (e.code) {
-          'username_taken' => '用户名已存在',
-          'administrator_only' => '仅管理员可管理用户',
-          _ => '创建失败，请重试',
-        };
-      });
+      setState(() => _error = _errorText(e, '创建失败，请重试'));
     } finally {
       if (mounted) setState(() => _creating = false);
     }
@@ -84,29 +81,43 @@ class _UsersScreenState extends State<UsersScreen> {
     );
     if (newPassword == null || newPassword.trim().isEmpty) return;
     try {
-      await widget.api.resetPassword(widget.token,
-          id: user.id, password: newPassword);
+      await widget.api.resetPassword(
+        widget.token,
+        id: user.id,
+        password: newPassword,
+      );
       setState(() => _info = '已重置 ${user.username} 的密码');
     } on ApiException catch (e) {
-      setState(() {
-        _error = switch (e.code) {
-          'administrator_only' => '仅管理员可管理用户',
-          _ => '重置失败，请重试',
-        };
-      });
+      setState(() => _error = _errorText(e, '重置失败，请重试'));
     }
   }
 
   Future<void> _delete(User user) async {
     setState(_clearMessages);
+    // The cascade's number must be true when it is shown: read it fresh
+    // rather than trusting the list the tab loaded with.
+    List<User> fresh;
+    try {
+      fresh = await widget.api.users(widget.token);
+    } on ApiException {
+      setState(() => _error = '删除失败，请重试');
+      return;
+    }
+    final matches = fresh.where((u) => u.id == user.id).toList();
+    if (matches.isEmpty) {
+      _reload(); // already gone
+      return;
+    }
+    if (!mounted) return;
+    final memoCount = matches.single.memoCount;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('删除用户 ${user.username}'),
         content: Text(
-          user.memoCount == 0
+          memoCount == 0
               ? '该用户没有备忘录。删除后其账号及全部数据将一并消失，且无法恢复。'
-              : '该用户有 ${user.memoCount} 条备忘录。删除后其账号与全部备忘录（含标签、提醒）将级联硬删除，且无法恢复。',
+              : '该用户有 $memoCount 条备忘录。删除后其账号与全部备忘录（含标签、提醒）将级联硬删除，且无法恢复。',
         ),
         actions: [
           TextButton(
@@ -131,15 +142,18 @@ class _UsersScreenState extends State<UsersScreen> {
       await widget.api.deleteUser(widget.token, id: user.id);
       _reload();
     } on ApiException catch (e) {
-      setState(() {
-        _error = switch (e.code) {
-          'self_delete' => '不能删除自己的账号',
-          'administrator_only' => '仅管理员可管理用户',
-          _ => '删除失败，请重试',
-        };
-      });
+      setState(() => _error = _errorText(e, '删除失败，请重试'));
     }
   }
+
+  /// One code → 文案 mapping shared by every management action; callers
+  /// supply the fallback for the codes they don't have in common.
+  String _errorText(ApiException e, String fallback) => switch (e.code) {
+    'username_taken' => '用户名已存在',
+    'administrator_only' => '仅管理员可管理用户',
+    'self_delete' => '不能删除自己的账号',
+    _ => fallback,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -173,7 +187,8 @@ class _UsersScreenState extends State<UsersScreen> {
                       key: Key('user_${user.username}'),
                       title: Text(user.username),
                       subtitle: Text(
-                          '${user.isAdministrator ? '管理员' : '用户'} · ${user.memoCount} 条备忘录'),
+                        '${user.isAdministrator ? '管理员' : '用户'} · ${user.memoCount} 条备忘录',
+                      ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -184,7 +199,7 @@ class _UsersScreenState extends State<UsersScreen> {
                             onPressed: () => _resetPassword(user),
                           ),
                           // The administrator row offers no delete: removing
-                          // one's own account is rejected server-side too.
+                          // one's own user is rejected server-side too.
                           if (!user.isAdministrator)
                             IconButton(
                               key: Key('delete_user_${user.id}'),
@@ -244,10 +259,15 @@ class _UsersScreenState extends State<UsersScreen> {
           if (_error != null || _info != null) ...[
             const SizedBox(height: 8),
             if (_error != null)
-              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              )
             else
-              Text(_info!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+              Text(
+                _info!,
+                style: TextStyle(color: Theme.of(context).colorScheme.primary),
+              ),
           ],
         ],
       ),

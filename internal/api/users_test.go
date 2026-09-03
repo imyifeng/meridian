@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/imyifeng/meridian/internal/api/apitest"
@@ -95,6 +96,11 @@ func TestAdministratorCreatesUsers(t *testing.T) {
 		map[string]string{"username": "carol", "password": "   "}, nil); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("whitespace password: status %d, want 400", resp.StatusCode)
 	}
+	// bcrypt refuses to hash beyond 72 bytes, so refuse it earlier.
+	if resp := env.Call("POST", "/api/v1/users", administrator.Token,
+		map[string]string{"username": "carol", "password": strings.Repeat("x", 73)}, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("over-long password: status %d, want 400", resp.StatusCode)
+	}
 
 	// Everyone created this way is an ordinary user: only the setup wizard
 	// makes administrators (ADR-0001).
@@ -147,6 +153,10 @@ func TestAdministratorResetsAnyPassword(t *testing.T) {
 		map[string]string{"password": "  "}, nil); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("reset to blank password: status %d, want 400", resp.StatusCode)
 	}
+	if resp := env.Call("PUT", "/api/v1/users/"+itoa(bob.ID)+"/password", administrator.Token,
+		map[string]string{"password": strings.Repeat("x", 73)}, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("reset to over-long password: status %d, want 400", resp.StatusCode)
+	}
 	if resp := env.Call("PUT", "/api/v1/users/9999/password", administrator.Token,
 		map[string]string{"password": "x"}, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("reset missing user: status %d, want 404", resp.StatusCode)
@@ -188,7 +198,7 @@ func TestDeletingUserCascadesHard(t *testing.T) {
 		t.Fatalf("delete bob: status %d, want 204", resp.StatusCode)
 	}
 
-	// The account can no longer log in…
+	// The user can no longer log in…
 	if resp := env.Call("POST", "/api/v1/auth/login", "",
 		map[string]string{"username": "bob", "password": "bob's password"}, nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("deleted user login: status %d, want 401", resp.StatusCode)
@@ -206,7 +216,7 @@ func TestDeletingUserCascadesHard(t *testing.T) {
 	}
 
 	// …and its data is really gone: the name is free again, and the fresh
-	// account starts from zero.
+	// user starts from zero.
 	bob2 := createUserAndLogin(t, env, administrator, "bob", "bob's password")
 	var list struct {
 		Memos []map[string]any `json:"memos"`
@@ -216,7 +226,7 @@ func TestDeletingUserCascadesHard(t *testing.T) {
 		t.Errorf("recreated bob sees %d memos, want 0 (old data hard-deleted)", len(list.Memos))
 	}
 
-	// The administrator cannot delete their own account: the setup wizard is
+	// The administrator cannot delete themselves: the setup wizard is
 	// one-way, so that would leave the instance permanently unmanageable.
 	if resp := env.Call("DELETE", "/api/v1/users/"+itoa(administrator.ID), administrator.Token, nil, nil); resp.StatusCode != http.StatusConflict {
 		t.Errorf("administrator deletes self: status %d, want 409", resp.StatusCode)
@@ -282,7 +292,7 @@ func TestUserDatasAreFullyIsolated(t *testing.T) {
 		t.Errorf("bob's list = %+v, want only his memo", list.Memos)
 	}
 
-	// Across accounts everything looks missing, never forbidden.
+	// Across users everything looks missing, never forbidden.
 	for _, c := range []struct {
 		name   string
 		token  string

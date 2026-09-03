@@ -9,7 +9,7 @@ import (
 	"github.com/imyifeng/meridian/internal/store"
 )
 
-// User management is the console's second pillar: accounts come into being
+// User management is the console's second pillar: users come into being
 // here (ADR-0001 — no self-registration), and every route is administrator
 // only. The user list doubles as the data source for the delete confirmation
 // dialog, which is why it carries memo_count.
@@ -31,18 +31,23 @@ type userInput struct {
 	Password string `json:"password"`
 }
 
+// validPassword accepts anything non-blank that bcrypt will take: a password
+// is never trimmed (spaces may be intentional) but an all-whitespace one is a
+// typo, and over-length input would otherwise surface as a hashing error.
+func validPassword(password string) bool {
+	return strings.TrimSpace(password) != "" && len(password) <= store.MaxPasswordBytes
+}
+
 func (s *server) createUser(w http.ResponseWriter, r *http.Request) {
 	var in userInput
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	// A password is never trimmed — spaces may be intentional — but an
-	// all-whitespace one is a typo, not a choice.
-	if strings.TrimSpace(in.Username) == "" || strings.TrimSpace(in.Password) == "" {
+	if strings.TrimSpace(in.Username) == "" || !validPassword(in.Password) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	u, err := s.st.CreateUser(in.Username, in.Password, "user")
+	u, err := s.st.CreateUser(in.Username, in.Password)
 	if errors.Is(err, store.ErrUsernameTaken) {
 		writeError(w, http.StatusConflict, "username_taken")
 		return
@@ -54,7 +59,8 @@ func (s *server) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, u)
 }
 
-func (s *server) userID(r *http.Request) (int64, bool) {
+// pathID parses the {id} path value shared by every resource route.
+func pathID(r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
@@ -63,7 +69,7 @@ func (s *server) userID(r *http.Request) (int64, bool) {
 }
 
 func (s *server) resetPassword(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.userID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
@@ -72,7 +78,7 @@ func (s *server) resetPassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	if strings.TrimSpace(in.Password) == "" {
+	if !validPassword(in.Password) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -89,13 +95,13 @@ func (s *server) resetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteUser(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.userID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
 	// The setup wizard is one-way (ADR-0001): an administrator who removed
-	// their own account could never be replaced.
+	// their own user could never be replaced.
 	if id == identity(r).ID {
 		writeError(w, http.StatusConflict, "self_delete")
 		return

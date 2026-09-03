@@ -31,23 +31,27 @@ func parseTime(s string) time.Time {
 	return t
 }
 
+// MaxPasswordBytes is the longest password bcrypt will hash; longer input is
+// rejected before hashing rather than truncated.
+const MaxPasswordBytes = 72
+
 // HashPassword hashes a plaintext password for storage.
 func HashPassword(password string) (string, error) {
 	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(h), err
 }
 
-// CreateUser adds an ordinary user on an administrator's behalf; role is
-// always "user" because only the setup wizard makes administrators (ADR-0001).
-func (s *Store) CreateUser(username, password, role string) (*User, error) {
+// CreateUser adds an ordinary user on an administrator's behalf. Only the
+// setup wizard makes administrators (ADR-0001), so the role is not a choice.
+func (s *Store) CreateUser(username, password string) (*User, error) {
 	username = strings.TrimSpace(username)
 	hash, err := HashPassword(password)
 	if err != nil {
 		return nil, err
 	}
 	res, err := s.db.Exec(
-		"INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		username, hash, role, now(), now(),
+		"INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, 'user', ?, ?)",
+		username, hash, now(), now(),
 	)
 	if err != nil {
 		// The single pooled connection serializes writes, so a duplicate
@@ -61,7 +65,7 @@ func (s *Store) CreateUser(username, password, role string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &User{ID: id, Username: username, Role: role}, nil
+	return &User{ID: id, Username: username, Role: "user"}, nil
 }
 
 func (s *Store) usernameExists(username string) bool {
@@ -70,7 +74,7 @@ func (s *Store) usernameExists(username string) bool {
 	return err == nil
 }
 
-// UserSummary is one row of the administrator's user list: the account plus
+// UserSummary is one row of the administrator's user list: the user plus
 // how many memos deleting it would take with it (the confirmation dialog's
 // number). Categories are instance-wide, so they never appear here.
 type UserSummary struct {
@@ -78,7 +82,7 @@ type UserSummary struct {
 	MemoCount int64 `json:"memo_count"`
 }
 
-// Users lists every account on the instance, oldest first.
+// Users lists every user on the instance, oldest first.
 func (s *Store) Users() ([]UserSummary, error) {
 	rows, err := s.db.Query(
 		`SELECT u.id, u.username, u.role, COUNT(m.id)
@@ -130,7 +134,7 @@ func (s *Store) ResetPassword(userID int64, password string) error {
 	return tx.Commit()
 }
 
-// DeleteUser removes an account outright: memos and sessions cascade via
+// DeleteUser removes a user outright: memos and sessions cascade via
 // foreign keys, so nothing of the user's survives. Tags and reminders, once
 // they exist, must carry the same ON DELETE CASCADE.
 func (s *Store) DeleteUser(userID int64) error {

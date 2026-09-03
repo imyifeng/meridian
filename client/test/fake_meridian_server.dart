@@ -35,7 +35,7 @@ class FakeMeridianServer {
   /// An http.Client that serves this fake instance.
   http.Client get client => MockClient(_route);
 
-  /// Pre-seeds an account, standing in for the setup wizard.
+  /// Pre-seeds a user, standing in for the setup wizard.
   void registerUser(String username, String password,
       {String role = 'administrator'}) {
     _passwords[username] = password;
@@ -43,7 +43,7 @@ class FakeMeridianServer {
     initialized = true;
   }
 
-  /// Pre-seeds an ordinary account, standing in for console user management.
+  /// Pre-seeds an ordinary user, standing in for console user management.
   Map<String, dynamic> createUser(String username, String password) {
     _passwords[username] = password;
     final user = {'id': _nextUserId++, 'username': username, 'role': 'user'};
@@ -182,9 +182,11 @@ class FakeMeridianServer {
   http.Response _createUser(http.Request request, String user) {
     if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
     final body = _body(request);
-    final username = body['username'] as String? ?? '';
+    // Same as the real store: the name is trimmed before the uniqueness
+    // check, so whitespace variants collide with existing users.
+    final username = (body['username'] as String? ?? '').trim();
     final password = body['password'] as String? ?? '';
-    if (username.trim().isEmpty || password.trim().isEmpty) {
+    if (username.isEmpty || password.trim().isEmpty) {
       return _json(400, {'error': 'invalid_request'});
     }
     if (_users.containsKey(username)) {
@@ -212,7 +214,7 @@ class FakeMeridianServer {
     final target = _usernameById(id);
     if (target == null) return _json(404, {'error': 'not_found'});
     if (target == user) return _json(409, {'error': 'self_delete'});
-    // Cascade: the account, its memos, and its sessions all disappear.
+    // Cascade: the user, their memos, and their sessions all disappear.
     _users.remove(target);
     _passwords.remove(target);
     _memos.removeWhere((m) => m['user_id'] == target);

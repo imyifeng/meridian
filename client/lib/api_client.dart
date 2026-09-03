@@ -95,7 +95,7 @@ class MeridianApi {
     await _request('DELETE', '/api/v1/categories/$id', token: token);
   }
 
-  /// The instance's accounts, administrators only. Each entry carries
+  /// The instance's users, administrators only. Each entry carries
   /// memo_count — the number the delete confirmation dialog must show.
   Future<List<User>> users(String token) async {
     final body = await _request('GET', '/api/v1/users', token: token);
@@ -122,8 +122,8 @@ class MeridianApi {
         body: {'password': password});
   }
 
-  /// Hard-deletes an account; all of its data disappears with it server-side.
-  /// The server answers 409 when the caller targets their own account.
+  /// Hard-deletes a user; all of their data disappears with it server-side.
+  /// The server answers 409 when the caller targets themselves.
   Future<void> deleteUser(String token, {required int id}) async {
     await _request('DELETE', '/api/v1/users/$id', token: token);
   }
@@ -134,7 +134,9 @@ class MeridianApi {
       for (final m in body['memos'] as List? ?? [])
         Memo.fromJson(m as Map<String, dynamic>),
     ];
-  }  /// categoryId omitted → the server files the memo under 未分类.
+  }
+
+  /// categoryId omitted → the server files the memo under 未分类.
   Future<Memo> createMemo(String token,
       {required String title, String body = '', int? categoryId}) async {
     final data = await _request('POST', '/api/v1/memos', token: token, body: {
@@ -182,7 +184,7 @@ class User {
   /// taxonomy.
   final String role;
 
-  /// How many memos this account owns; set only in the administrator's user
+  /// How many memos this user owns; set only in the administrator's user
   /// list, where it feeds the delete confirmation dialog.
   final int memoCount;
 
