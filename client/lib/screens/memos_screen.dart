@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../memo_cache.dart';
+import '../reminders.dart';
 import 'memo_edit_screen.dart';
 import 'memo_view_screen.dart';
 import 'trash_screen.dart';
@@ -11,7 +12,10 @@ import 'trash_screen.dart';
 /// The memo list: every memo of the signed-in user, newest first, each with
 /// its taxonomy category (ADR-0002). Started offline (T8) it shows the
 /// cached snapshot read-only and keeps retrying until the server answers
-/// again; the server stays the only source of writes.
+/// again; the server stays the only source of writes. It also drives
+/// reminder scheduling (T9): every full load and the offline snapshot feed
+/// the ReminderService, whose local notifications open back into this
+/// screen.
 class MemosScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
@@ -21,6 +25,13 @@ class MemosScreen extends StatefulWidget {
   /// until a retry succeeds.
   final bool initialOffline;
 
+  /// The platform notification surface (T9); tests inject a fake. Null
+  /// means no reminder scheduling at all.
+  final ReminderNotifications? reminderNotifications;
+
+  /// Clock override for reminder tests; production uses the wall clock.
+  final DateTime Function()? reminderNow;
+
   final VoidCallback onSignOut;
 
   const MemosScreen({
@@ -29,6 +40,8 @@ class MemosScreen extends StatefulWidget {
     required this.token,
     required this.cache,
     this.initialOffline = false,
+    this.reminderNotifications,
+    this.reminderNow,
     required this.onSignOut,
   });
 
@@ -49,6 +62,8 @@ class _MemosScreenState extends State<MemosScreen> {
   MemoListData? _cachedData;
   Timer? _retryTimer;
   bool _checkingConnection = false;
+  // Reminder scheduling (T9); lives as long as the signed-in list screen.
+  ReminderService? _reminders;
 
   // Every `_future = _load()` carries `..ignore()`: load errors must be
   // handled even when the FutureBuilder never subscribes because the load
@@ -56,6 +71,17 @@ class _MemosScreenState extends State<MemosScreen> {
   @override
   void initState() {
     super.initState();
+    final notifications = widget.reminderNotifications;
+    if (notifications != null) {
+      // The service outlives nothing but this screen: disposing with it
+      // also drops the in-memory armed set, so a fresh run never refires
+      // what it did not see come due.
+      final service = ReminderService(
+          notifications: notifications, now: widget.reminderNow);
+      service.onOpen = _openFromNotification;
+      _reminders = service;
+      service.start();
+    }
     if (widget.initialOffline) {
       _offline = true;
       _goOffline();
@@ -66,6 +92,7 @@ class _MemosScreenState extends State<MemosScreen> {
 
   @override
   void dispose() {
+    _reminders?.dispose();
     _retryTimer?.cancel();
     _searchController.dispose();
     super.dispose();
@@ -88,6 +115,9 @@ class _MemosScreenState extends State<MemosScreen> {
         );
       }
     });
+    // The reminder notice is local (T9): it fires from the cache too.
+    final data = _cachedData;
+    if (data != null) await _reminders?.sync(data.memos);
   }
 
   Future<MemoListData> _load() async {
@@ -101,10 +131,12 @@ class _MemosScreenState extends State<MemosScreen> {
       // Keep the offline snapshot current (T8) — full lists only: a search
       // or filter result must never masquerade offline as "all my memos".
       // The reconnect retry lands here too, so recovery also refreshes the
-      // cache.
+      // cache. Same rule for the scheduler (T9): a filtered page must not
+      // disarm reminders it does not show.
       if (_filterTag == null && _searchQuery == null) {
         await widget.cache.write(CachedSnapshot(
             token: widget.token, memos: memos, categories: categories));
+        await _reminders?.sync(memos);
       }
       return MemoListData(memos, {for (final c in categories) c.id: c.name});
     } on ApiException catch (e) {
@@ -239,6 +271,17 @@ class _MemosScreenState extends State<MemosScreen> {
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => MemoViewScreen(memo: memo),
     ));
+  }
+
+  /// A tapped reminder notification opens its memo, exactly like tapping
+  /// the row does: editor online, reader offline (T9).
+  Future<void> _openFromNotification(Memo memo) async {
+    if (!mounted) return;
+    if (_offline) {
+      await _openReadOnlyViewer(memo);
+    } else {
+      await _openEditor(memo);
+    }
   }
 
   /// The recycle bin (T5); anything may have come back out of it.
@@ -398,7 +441,15 @@ class _MemosScreenState extends State<MemosScreen> {
         return ListTile(
           title: Text(memo.title),
           subtitle: memo.body.isEmpty ? null : Text(memo.body, maxLines: 1, overflow: TextOverflow.ellipsis),
-          trailing: Text(categoryNames[memo.categoryId] ?? ''),
+          // The alarm marks a memo carrying a reminder (T9) — one set on any
+          // device shows up here, because it rode along with the memo.
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (memo.remindAt != null) ...[
+              const Icon(Icons.alarm, size: 16),
+              const SizedBox(width: 6),
+            ],
+            Text(categoryNames[memo.categoryId] ?? ''),
+          ]),
           onTap: () => _offline ? _openReadOnlyViewer(memo) : _openEditor(memo),
         );
       },

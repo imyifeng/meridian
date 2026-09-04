@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
 import 'memo_cache.dart';
+import 'reminders.dart';
 import 'screens/login_screen.dart';
 import 'screens/memos_screen.dart';
 import 'screens/setup_screen.dart';
@@ -27,12 +28,22 @@ class MeridianApp extends StatefulWidget {
   /// socket-based client.
   final http.Client? apiClient;
 
+  /// The platform notification surface for reminders (T9); tests inject a
+  /// fake, production the plugin adapter. Null disables reminder scheduling
+  /// entirely — the Web 简易客户端 carries no reminder notifications.
+  final ReminderNotifications? reminderNotifications;
+
+  /// Clock override for reminder scheduling tests.
+  final DateTime Function()? reminderNow;
+
   const MeridianApp({
     super.key,
     required this.baseUrl,
     required this.tokenStore,
     this.memoCache,
     this.apiClient,
+    this.reminderNotifications,
+    this.reminderNow,
   });
 
   @override
@@ -168,6 +179,8 @@ class _MeridianAppState extends State<MeridianApp> {
             token: _token!,
             cache: _memoCache,
             initialOffline: _offline,
+            reminderNotifications: widget.reminderNotifications,
+            reminderNow: widget.reminderNow,
             onSignOut: _signedOut,
           ),
         AppState.error => _errorScaffold(),

@@ -154,30 +154,34 @@ class MeridianApi {
   }
 
   /// categoryId omitted → the server files the memo under 未分类; tags
-  /// omitted → it starts with none. A non-null tags list is saved as given.
+  /// omitted → it starts with none; remindAt omitted → it starts with no
+  /// reminder. A non-null tags list is saved as given.
   Future<Memo> createMemo(String token,
       {required String title, String body = '', int? categoryId,
-      List<String>? tags}) async {
+      List<String>? tags, DateTime? remindAt}) async {
     final data = await _request('POST', '/api/v1/memos', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
       'tags': ?tags,
+      'remind_at': ?remindAt?.toUtc().toIso8601String(),
     });
     return Memo.fromJson(data);
   }
 
   /// categoryId omitted → the memo keeps its current category; tags omitted
-  /// → it keeps its current tags. A non-null list (even empty) replaces the
-  /// whole set.
+  /// → it keeps its current tags. remindAt is always sent — the editor owns
+  /// the memo's whole state — so null clears the reminder and a time sets
+  /// it; the server also accepts an absent key as "keep" for other callers.
   Future<Memo> updateMemo(String token,
       {required int id, required String title, String body = '',
-      int? categoryId, List<String>? tags}) async {
+      int? categoryId, List<String>? tags, DateTime? remindAt}) async {
     final data = await _request('PUT', '/api/v1/memos/$id', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
       'tags': ?tags,
+      'remind_at': remindAt?.toUtc().toIso8601String() ?? '',
     });
     return Memo.fromJson(data);
   }
@@ -284,12 +288,23 @@ class Memo {
   /// they are rendered verbatim, never as Markdown.
   final List<String> tags;
 
+  /// The memo's one-shot reminder (T9), in local time; null is none. It
+  /// belongs to the memo, not to any device, so every logged-in client sees
+  /// the same one and fires its own local notification (ADR-0004).
+  final DateTime? remindAt;
+
   Memo(
       {required this.id,
       required this.title,
       required this.body,
       required this.categoryId,
-      this.tags = const []});
+      this.tags = const [],
+      this.remindAt});
+
+  static DateTime? _parseRemindAt(Object? raw) {
+    if (raw is! String || raw.isEmpty) return null;
+    return DateTime.tryParse(raw)?.toLocal();
+  }
 
   factory Memo.fromJson(Map<String, dynamic> json) => Memo(
         id: json['id'] as int,
@@ -299,6 +314,7 @@ class Memo {
         tags: [
           for (final t in json['tags'] as List? ?? []) t as String,
         ],
+        remindAt: _parseRemindAt(json['remind_at']),
       );
 
   /// The API wire shape, shared by the offline snapshot's encoding.
@@ -308,6 +324,7 @@ class Memo {
         'body': body,
         'category_id': categoryId,
         'tags': tags,
+        'remind_at': remindAt?.toUtc().toIso8601String(),
       };
 }
 

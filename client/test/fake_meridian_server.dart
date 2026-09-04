@@ -59,7 +59,7 @@ class FakeMeridianServer {
 
   /// Pre-seeds a memo owned by [username], standing in for that user's client.
   void seedMemo(String username, String title,
-      {String? body, List<String>? tags, int? categoryId}) {
+      {String? body, List<String>? tags, int? categoryId, DateTime? remindAt}) {
     _memos.add({
       'id': _nextMemoId++,
       'user_id': username,
@@ -67,10 +67,28 @@ class FakeMeridianServer {
       'title': title,
       'body': body ?? '',
       'tags': tags != null ? _normalizeTags(tags)! : <String>[],
+      'remind_at': remindAt?.toUtc().toIso8601String(),
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       'deleted_at': '',
     });
+  }
+
+  /// The reminder currently stored for the first memo titled [title]; null
+  /// is none. Returns local time, like Memo.fromJson does. Lets tests
+  /// assert exactly what a save exported over the wire.
+  DateTime? remindAtOf(String title) {
+    final raw = _memos.firstWhere((m) => m['title'] == title)['remind_at'] as String?;
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.parse(raw).toLocal();
+  }
+
+  /// Rewrites a memo's reminder, standing in for another device having
+  /// changed it.
+  void setMemoReminder(String username, String title, DateTime? when) {
+    final memo = _memos
+        .firstWhere((m) => m['user_id'] == username && m['title'] == title);
+    memo['remind_at'] = when?.toUtc().toIso8601String();
   }
 
   /// Same rules as the real server: trim each name, reject blank or
@@ -350,6 +368,18 @@ class FakeMeridianServer {
     return requested;
   }
 
+  /// Decodes a remind_at request value the way the real server does (T9):
+  /// absent → keep (create: none), '' → clear, RFC3339 → set, anything
+  /// else → invalid (400).
+  (String, DateTime?) _decodeRemindAt(Map<String, dynamic> body) {
+    final raw = body['remind_at'];
+    if (raw == null) return ('keep', null);
+    if (raw is! String) return ('invalid', null);
+    if (raw.isEmpty) return ('clear', null);
+    final t = DateTime.tryParse(raw);
+    return (t == null ? 'invalid' : 'set', t);
+  }
+
   Future<http.Response> _createMemo(http.Request request, String user) async {
     final body = _body(request);
     final title = (body['title'] as String? ?? '').trim();
@@ -361,6 +391,8 @@ class FakeMeridianServer {
     }
     final categoryId = _resolveCategoryId(body);
     if (categoryId == -1) return _json(400, {'error': 'unknown_category'});
+    final (remindOutcome, remindAt) = _decodeRemindAt(body);
+    if (remindOutcome == 'invalid') return _json(400, {'error': 'invalid_request'});
     final now = DateTime.now().toUtc().toIso8601String();
     final memo = {
       'id': _nextMemoId++,
@@ -369,6 +401,8 @@ class FakeMeridianServer {
       'title': title,
       'body': body['body'] as String? ?? '',
       'tags': tags ?? <String>[],
+      'remind_at':
+          remindOutcome == 'set' ? remindAt!.toUtc().toIso8601String() : null,
       'created_at': now,
       'updated_at': now,
       'deleted_at': '',
@@ -394,10 +428,17 @@ class FakeMeridianServer {
     final categoryId =
         _resolveCategoryId(body, current: _memos[idx]['category_id'] as int);
     if (categoryId == -1) return _json(400, {'error': 'unknown_category'});
+    final (remindOutcome, remindAt) = _decodeRemindAt(body);
+    if (remindOutcome == 'invalid') return _json(400, {'error': 'invalid_request'});
     _memos[idx]['title'] = title;
     _memos[idx]['body'] = body['body'] as String? ?? '';
     _memos[idx]['category_id'] = categoryId;
     if (tags != null) _memos[idx]['tags'] = tags;
+    if (remindOutcome == 'clear') {
+      _memos[idx]['remind_at'] = null;
+    } else if (remindOutcome == 'set') {
+      _memos[idx]['remind_at'] = remindAt!.toUtc().toIso8601String();
+    }
     _memos[idx]['updated_at'] = DateTime.now().toUtc().toIso8601String();
     return _json(200, _memos[idx]);
   }

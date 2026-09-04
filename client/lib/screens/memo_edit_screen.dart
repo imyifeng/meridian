@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../editor/meridian_editor.dart';
+import '../reminders.dart';
 
 /// Title + WYSIWYG body editor (ADR-0006) for creating and editing a memo,
 /// plus the category picker: memos live in exactly one taxonomy category
@@ -34,6 +35,9 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   // own tag history, the autocomplete source (T4).
   List<String> _tags = const [];
   List<String> _knownTags = const [];
+  // The one-shot reminder (T9), edited locally and saved as a whole with
+  // the rest of the memo's state; null is none.
+  DateTime? _remindAt;
   int? _categoryId;
   bool _busy = false;
 
@@ -47,6 +51,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     _title = TextEditingController(text: widget.memo?.title ?? '');
     _tagField = TextEditingController();
     _tags = List.of(widget.memo?.tags ?? const <String>[]);
+    _remindAt = widget.memo?.remindAt;
     _categoryId = widget.memo?.categoryId;
     _categories = widget.api.categories(widget.token);
     _loadKnownTags();
@@ -109,11 +114,12 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       final body = _bodyEditable ? _bodyEditor.markdown : widget.memo?.body ?? '';
       if (widget.memo == null) {
         await widget.api.createMemo(widget.token,
-            title: title, body: body, categoryId: _categoryId, tags: _tags);
+            title: title, body: body, categoryId: _categoryId, tags: _tags,
+            remindAt: _remindAt);
       } else {
         await widget.api.updateMemo(widget.token,
             id: widget.memo!.id, title: title, body: body,
-            categoryId: _categoryId, tags: _tags);
+            categoryId: _categoryId, tags: _tags, remindAt: _remindAt);
       }
       if (mounted) Navigator.of(context).pop();
     } on ApiException catch (e) {
@@ -233,6 +239,8 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
             const SizedBox(height: 12),
             _buildTagSection(),
             const SizedBox(height: 12),
+            _buildReminderSection(),
+            const SizedBox(height: 12),
             Expanded(child: _buildBodySection()),
           ],
         ),
@@ -320,6 +328,76 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
           ),
       ],
     );
+  }
+
+  /// The one-shot reminder (T9): a picker row when none is set, otherwise
+  /// the standing time with change and clear actions. Editing stays local
+  /// until 保存, like the tags it sits next to.
+  Widget _buildReminderSection() {
+    final remindAt = _remindAt;
+    return Row(
+      key: const Key('reminder_section'),
+      children: [
+        const Icon(Icons.alarm, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: remindAt == null
+              ? TextButton.icon(
+                  key: const Key('set_reminder_button'),
+                  icon: const Icon(Icons.notification_add, size: 18),
+                  label: const Text('设置提醒'),
+                  onPressed: _busy ? null : _pickReminder,
+                )
+              : Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: [
+                    Text(formatReminder(remindAt),
+                        key: const Key('reminder_value')),
+                    TextButton(
+                      key: const Key('change_reminder_button'),
+                      onPressed: _busy ? null : _pickReminder,
+                      child: const Text('修改'),
+                    ),
+                    TextButton(
+                      key: const Key('clear_reminder_button'),
+                      onPressed:
+                          _busy ? null : () => setState(() => _remindAt = null),
+                      child: const Text('取消提醒'),
+                    ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  /// Date first, then time — a future moment only: the picker offers no
+  /// yesterday, and a reminder set in the past would never fire.
+  Future<void> _pickReminder() async {
+    final now = DateTime.now();
+    final current = _remindAt;
+    final initial = current != null && current.isAfter(now) ? current : now;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 366)),
+      helpText: '选择提醒日期',
+    );
+    if (!mounted || date == null) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      initialEntryMode: TimePickerEntryMode.input,
+      helpText: '选择提醒时间',
+    );
+    if (!mounted || time == null) return;
+    setState(() {
+      _remindAt =
+          DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    });
   }
 
   void _reloadCategories() {

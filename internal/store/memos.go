@@ -46,7 +46,8 @@ func scanMemo(row interface{ Scan(...any) error }) (Memo, error) {
 	return m, nil
 }
 
-// remindAtPtr decodes the remind_at column: '' is no reminder.
+// remindAtPtr decodes the remind_at column: the empty string is no
+// reminder.
 func remindAtPtr(s string) *time.Time {
 	if s == "" {
 		return nil
@@ -56,7 +57,7 @@ func remindAtPtr(s string) *time.Time {
 }
 
 // formatRemindAt encodes the remind_at column; nil and the zero time (the
-// API's "clear" value) both encode as ''.
+// API clear value) both encode as the empty string.
 func formatRemindAt(t *time.Time) string {
 	if t == nil || t.IsZero() {
 		return ""
