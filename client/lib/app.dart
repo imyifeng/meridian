@@ -68,13 +68,13 @@ class _MeridianAppState extends State<MeridianApp> {
 
   Future<void> _bootstrap() async {
     setState(() => _state = AppState.loading);
+    String? token = await widget.tokenStore.read();
     try {
       final initialized = await _api().isInitialized();
       if (!initialized) {
         setState(() => _state = AppState.setup);
         return;
       }
-      final token = await widget.tokenStore.read();
       if (token == null) {
         setState(() => _state = AppState.login);
         return;
@@ -91,37 +91,34 @@ class _MeridianAppState extends State<MeridianApp> {
         await widget.tokenStore.clear();
         await _memoCache.clear();
         setState(() => _state = AppState.login);
-      } else if (e.isUnreachable) {
-        final snapshot = await _cachedSnapshotForStoredToken();
+      } else {
+        // Offline with a cache for this credential (ADR-0003): read-only
+        // memos beat a dead end. MemosScreen keeps retrying until the
+        // connection returns. Everything else — unreachable with no usable
+        // cache, or a server error — is the error screen.
+        final snapshot =
+            e.isUnreachable && token != null
+                ? await _snapshotForToken(token)
+                : null;
         if (snapshot != null) {
-          // Offline with a cache for this credential (ADR-0003): read-only
-          // memos beat a dead end. MemosScreen keeps retrying until the
-          // connection returns.
           setState(() {
             _token = snapshot.token;
             _offline = true;
             _state = AppState.memos;
           });
-          return;
+        } else {
+          setState(() {
+            _message = '无法连接服务器，请检查服务器地址后重试';
+            _state = AppState.error;
+          });
         }
-        setState(() {
-          _message = '无法连接服务器，请检查服务器地址后重试';
-          _state = AppState.error;
-        });
-      } else {
-        setState(() {
-          _message = '无法连接服务器，请检查服务器地址后重试';
-          _state = AppState.error;
-        });
       }
     }
   }
 
-  /// The cached snapshot, but only if it belongs to the stored credential —
-  /// another account's memos must never be shown.
-  Future<CachedSnapshot?> _cachedSnapshotForStoredToken() async {
-    final token = await widget.tokenStore.read();
-    if (token == null) return null;
+  /// The cached snapshot, but only if it belongs to [token] — another
+  /// account's memos must never be shown.
+  Future<CachedSnapshot?> _snapshotForToken(String token) async {
     final snapshot = await _memoCache.read();
     return snapshot?.token == token ? snapshot : null;
   }

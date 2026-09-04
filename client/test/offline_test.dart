@@ -135,4 +135,38 @@ void main() {
     expect(find.text('购物清单'), findsNothing);
     expect(find.text('无法连接服务器，请检查服务器地址后重试'), findsOneWidget);
   });
+
+  testWidgets('运行中断网：保存失败有明确提示，列表转入只读并自动恢复', (tester) async {
+    final (fake, tokens, cache) = await loginAndCacheOneMemo(tester);
+
+    // The network dies while the app is open; the editor that was already
+    // open tries to save and must fail loudly, keeping the content.
+    fake.offline = true;
+    await tester.tap(find.byKey(const Key('new_memo_button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('title_field')), '断网时写的');
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pump();
+    expect(find.text('保存失败，请重试'), findsOneWidget);
+    expect(find.text('断网时写的'), findsOneWidget,
+        reason: '失败必须可见，内容不得静默丢失');
+
+    // Leaving the editor, the list notices the outage and goes read-only.
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('offline_banner')), findsOneWidget);
+    final fab = tester.widget<FloatingActionButton>(
+        find.byKey(const Key('new_memo_button')));
+    expect(fab.onPressed, isNull);
+
+    // Connection returns: the list recovers by itself, without the memo
+    // that never made it to the server.
+    fake.offline = false;
+    fake.seedMemo('yifeng', '网上新增');
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('offline_banner')), findsNothing);
+    expect(find.text('网上新增'), findsOneWidget);
+    expect(find.text('断网时写的'), findsNothing);
+  });
 }

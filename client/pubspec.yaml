@@ -41,7 +41,6 @@ dependencies:
   # trip); a caret range would let a dev-channel bump change the export
   # format underneath stored memos (ADR-0006).
   super_editor: 0.3.0-dev.52
-  shared_preferences: ^2.5.5
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -52,6 +51,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_secure_storage_platform_interface: ^2.0.3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

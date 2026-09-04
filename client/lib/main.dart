@@ -11,6 +11,6 @@ void main() {
     baseUrl: const String.fromEnvironment('MERIDIAN_SERVER',
         defaultValue: 'http://127.0.0.1:8080'),
     tokenStore: SecureTokenStore(),
-    memoCache: SharedPrefsMemoCache(),
+    memoCache: SecureMemoCache(),
   ));
 }
