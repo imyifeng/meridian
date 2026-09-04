@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
+import 'memo_cache.dart';
 import 'screens/login_screen.dart';
 import 'screens/memos_screen.dart';
 import 'screens/setup_screen.dart';
@@ -11,10 +12,16 @@ enum AppState { loading, setup, login, memos, error }
 
 /// MeridianApp wires the server address, the credential store, and the
 /// screen flow: setup wizard on an uninitialized instance, otherwise
-/// login (skipped when a stored credential still works), then memos.
+/// login (skipped when a stored credential still works), then memos. When
+/// the server is unreachable but a cached snapshot for the stored
+/// credential exists, it still enters the memos — read-only (ADR-0003).
 class MeridianApp extends StatefulWidget {
   final String baseUrl;
   final TokenStore tokenStore;
+
+  /// Offline snapshot store (T8); production persists via
+  /// shared_preferences, tests leave it null for the in-memory cache.
+  final MemoCache? memoCache;
 
   /// Transport override for UI seam tests; production uses the default
   /// socket-based client.
@@ -24,6 +31,7 @@ class MeridianApp extends StatefulWidget {
     super.key,
     required this.baseUrl,
     required this.tokenStore,
+    this.memoCache,
     this.apiClient,
   });
 
@@ -33,14 +41,19 @@ class MeridianApp extends StatefulWidget {
 
 class _MeridianAppState extends State<MeridianApp> {
   late final TextEditingController _serverAddress;
+  late final MemoCache _memoCache;
   AppState _state = AppState.loading;
   String? _token;
+  // True once the app entered the memos on a cached snapshot because the
+  // server was unreachable (T8); MemosScreen takes it from there.
+  bool _offline = false;
   String _message = '';
 
   @override
   void initState() {
     super.initState();
     _serverAddress = TextEditingController(text: widget.baseUrl);
+    _memoCache = widget.memoCache ?? InMemoryMemoCache();
     _bootstrap();
   }
 
@@ -69,12 +82,32 @@ class _MeridianAppState extends State<MeridianApp> {
       await _api().memos(token); // prove the stored credential still works
       setState(() {
         _token = token;
+        _offline = false;
         _state = AppState.memos;
       });
     } on ApiException catch (e) {
       if (e.isUnauthorized) {
+        // The credential is dead, so its cached snapshot must not linger.
         await widget.tokenStore.clear();
+        await _memoCache.clear();
         setState(() => _state = AppState.login);
+      } else if (e.isUnreachable) {
+        final snapshot = await _cachedSnapshotForStoredToken();
+        if (snapshot != null) {
+          // Offline with a cache for this credential (ADR-0003): read-only
+          // memos beat a dead end. MemosScreen keeps retrying until the
+          // connection returns.
+          setState(() {
+            _token = snapshot.token;
+            _offline = true;
+            _state = AppState.memos;
+          });
+          return;
+        }
+        setState(() {
+          _message = '无法连接服务器，请检查服务器地址后重试';
+          _state = AppState.error;
+        });
       } else {
         setState(() {
           _message = '无法连接服务器，请检查服务器地址后重试';
@@ -82,6 +115,15 @@ class _MeridianAppState extends State<MeridianApp> {
         });
       }
     }
+  }
+
+  /// The cached snapshot, but only if it belongs to the stored credential —
+  /// another account's memos must never be shown.
+  Future<CachedSnapshot?> _cachedSnapshotForStoredToken() async {
+    final token = await widget.tokenStore.read();
+    if (token == null) return null;
+    final snapshot = await _memoCache.read();
+    return snapshot?.token == token ? snapshot : null;
   }
 
   Future<void> _authenticated(Session session) async {
@@ -94,8 +136,12 @@ class _MeridianAppState extends State<MeridianApp> {
 
   void _signedOut() {
     widget.tokenStore.clear();
+    // Signed out means the local memo cache goes too: the next user of this
+    // device must not read the previous one's memos offline.
+    _memoCache.clear();
     setState(() {
       _token = null;
+      _offline = false;
       _state = AppState.login;
     });
   }
@@ -123,6 +169,8 @@ class _MeridianAppState extends State<MeridianApp> {
         AppState.memos => MemosScreen(
             api: _api(),
             token: _token!,
+            cache: _memoCache,
+            initialOffline: _offline,
             onSignOut: _signedOut,
           ),
         AppState.error => _errorScaffold(),

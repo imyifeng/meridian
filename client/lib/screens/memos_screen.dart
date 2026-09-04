@@ -1,20 +1,33 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../memo_cache.dart';
 import 'memo_edit_screen.dart';
 import 'trash_screen.dart';
 
 /// The memo list: every memo of the signed-in user, newest first, each with
-/// its taxonomy category (ADR-0002).
+/// its taxonomy category (ADR-0002). Started offline (T8) it shows the
+/// cached snapshot read-only and keeps retrying until the server answers
+/// again; the server stays the only source of writes.
 class MemosScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
+  final MemoCache cache;
+
+  /// Booted without a reachable server on a cached snapshot: read-only
+  /// until a retry succeeds.
+  final bool initialOffline;
+
   final VoidCallback onSignOut;
 
   const MemosScreen({
     super.key,
     required this.api,
     required this.token,
+    required this.cache,
+    this.initialOffline = false,
     required this.onSignOut,
   });
 
@@ -30,17 +43,45 @@ class _MemosScreenState extends State<MemosScreen> {
   bool _searching = false;
   String? _searchQuery;
   final _searchController = TextEditingController();
+  // Offline read-only mode (T8).
+  bool _offline = false;
+  MemoListData? _cachedData;
+  Timer? _retryTimer;
+  bool _checkingConnection = false;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    if (widget.initialOffline) {
+      _offline = true;
+      _loadCached();
+      // Nothing tells us the network is back, so poll until the server
+      // answers; the UI stays read-only in the meantime.
+      _retryTimer = Timer.periodic(
+          const Duration(seconds: 5), (_) => _tryReconnect());
+    } else {
+      _future = _load();
+    }
   }
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// Renders the snapshot the app booted from; the token match was already
+  /// vetted by the app shell.
+  Future<void> _loadCached() async {
+    final snapshot = await widget.cache.read();
+    if (!mounted || snapshot == null || snapshot.token != widget.token) return;
+    setState(() {
+      _cachedData = MemoListData(
+        snapshot.memos,
+        {for (final c in snapshot.categories) c.id: c.name},
+      );
+    });
   }
 
   Future<MemoListData> _load() async {
@@ -50,7 +91,40 @@ class _MemosScreenState extends State<MemosScreen> {
     final memos =
         await widget.api.memos(widget.token, tag: _filterTag, query: _searchQuery);
     final categories = await widget.api.categories(widget.token);
+    // Keep the offline snapshot current (T8) — full lists only: a search or
+    // filter result must never masquerade offline as "all my memos".
+    if (!_offline && _filterTag == null && _searchQuery == null) {
+      await widget.cache.write(CachedSnapshot(
+          token: widget.token, memos: memos, categories: categories));
+    }
     return MemoListData(memos, {for (final c in categories) c.id: c.name});
+  }
+
+  /// One retry tick: the moment the server answers, the screen goes back to
+  /// its normal live behavior, already showing fresh data.
+  Future<void> _tryReconnect() async {
+    if (_checkingConnection) return;
+    _checkingConnection = true;
+    try {
+      final data = await _load();
+      if (!mounted) return;
+      _retryTimer?.cancel();
+      setState(() {
+        _offline = false;
+        _cachedData = null;
+        _future = Future.value(data);
+      });
+    } on ApiException catch (e) {
+      if (e.isUnauthorized && mounted) {
+        // The credential died while we were offline; now that the server
+        // can finally say so, sign out like any other dead session.
+        _retryTimer?.cancel();
+        widget.onSignOut();
+      }
+      // Still unreachable: stay read-only until the next tick.
+    } finally {
+      _checkingConnection = false;
+    }
   }
 
   void _reload() {
@@ -143,6 +217,13 @@ class _MemosScreenState extends State<MemosScreen> {
     _reload();
   }
 
+  /// Offline (T8): cached memos open as pure readers — no editor, no server.
+  Future<void> _openReadOnlyViewer(Memo memo) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MemoEditScreen.viewer(memo: memo),
+    ));
+  }
+
   /// The recycle bin (T5); anything may have come back out of it.
   Future<void> _openTrash() async {
     await Navigator.of(context).push(MaterialPageRoute(
@@ -181,7 +262,8 @@ class _MemosScreenState extends State<MemosScreen> {
               key: const Key('search_button'),
               icon: const Icon(Icons.search),
               tooltip: '搜索',
-              onPressed: _openSearch,
+              // Search runs on the server; offline there is only the cache.
+              onPressed: _offline ? null : _openSearch,
             ),
           if (_filterTag != null)
             IconButton(
@@ -194,24 +276,25 @@ class _MemosScreenState extends State<MemosScreen> {
             key: const Key('filter_button'),
             icon: const Icon(Icons.filter_list),
             tooltip: '按标签筛选',
-            onPressed: _pickFilter,
+            onPressed: _offline ? null : _pickFilter,
           ),
           IconButton(
             key: const Key('trash_button'),
             icon: const Icon(Icons.delete_outline),
             tooltip: '回收站',
-            onPressed: _openTrash,
+            // The bin is server data, and its actions are writes.
+            onPressed: _offline ? null : _openTrash,
           ),
           IconButton(icon: const Icon(Icons.logout), tooltip: '退出登录', onPressed: widget.onSignOut),
         ],
       ),
       floatingActionButton: FloatingActionButton(
         key: const Key('new_memo_button'),
-        tooltip: '新建备忘录',
-        onPressed: _openEditor,
+        tooltip: _offline ? '离线中，暂不可新建' : '新建备忘录',
+        onPressed: _offline ? null : _openEditor,
         child: const Icon(Icons.add),
       ),
-      body: FutureBuilder<MemoListData>(
+      body: _offline ? _offlineBody() : FutureBuilder<MemoListData>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -229,31 +312,69 @@ class _MemosScreenState extends State<MemosScreen> {
               ),
             );
           }
-          final memos = snapshot.data?.memos ?? const <Memo>[];
-          final categoryNames = snapshot.data?.categoryNames ?? const {};
-          if (memos.isEmpty) {
-            final message = _searchQuery != null
-                ? '未找到匹配的备忘录'
-                : _filterTag == null
-                    ? '暂无备忘录'
-                    : '该标签下暂无备忘录';
-            return Center(child: Text(message));
-          }
-          return ListView.builder(
-            key: const Key('memo_list'),
-            itemCount: memos.length,
-            itemBuilder: (context, i) {
-              final memo = memos[i];
-              return ListTile(
-                title: Text(memo.title),
-                subtitle: memo.body.isEmpty ? null : Text(memo.body, maxLines: 1, overflow: TextOverflow.ellipsis),
-                trailing: Text(categoryNames[memo.categoryId] ?? ''),
-                onTap: () => _openEditor(memo),
-              );
-            },
-          );
+          return _memoList(snapshot.data ??
+              MemoListData(const <Memo>[], const {}));
         },
       ),
+    );
+  }
+
+  /// The offline read-only list (T8): the cached snapshot under a banner
+  /// that says so, with every server-backed entry point disabled.
+  Widget _offlineBody() {
+    final data = _cachedData;
+    if (data == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return Column(
+      children: [
+        Material(
+          key: const Key('offline_banner'),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.wifi_off, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '离线模式：仅可查看已缓存的内容，恢复联网后自动更新',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: _memoList(data)),
+      ],
+    );
+  }
+
+  Widget _memoList(MemoListData data) {
+    final memos = data.memos;
+    final categoryNames = data.categoryNames;
+    if (memos.isEmpty) {
+      final message = _searchQuery != null
+          ? '未找到匹配的备忘录'
+          : _filterTag == null
+              ? '暂无备忘录'
+              : '该标签下暂无备忘录';
+      return Center(child: Text(message));
+    }
+    return ListView.builder(
+      key: const Key('memo_list'),
+      itemCount: memos.length,
+      itemBuilder: (context, i) {
+        final memo = memos[i];
+        return ListTile(
+          title: Text(memo.title),
+          subtitle: memo.body.isEmpty ? null : Text(memo.body, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: Text(categoryNames[memo.categoryId] ?? ''),
+          onTap: () => _offline ? _openReadOnlyViewer(memo) : _openEditor(memo),
+        );
+      },
     );
   }
 }

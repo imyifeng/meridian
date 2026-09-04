@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -19,6 +20,10 @@ class FakeMeridianServer {
   }
 
   bool initialized = false;
+
+  /// True simulates the network being cut (T8): every request dies the way
+  /// an unreachable server does, so the app sees ApiException.unreachable.
+  bool offline = false;
   final Map<String, Map<String, dynamic>> _users =
       {}; // username -> {id, username, role}
   final Map<String, String> _passwords = {}; // username -> password
@@ -104,6 +109,7 @@ class FakeMeridianServer {
       _categories.values.firstWhere((c) => c['is_builtin'] == true)['id'] as int;
 
   Future<http.Response> _route(http.Request request) async {
+    if (offline) throw const SocketException('offline');
     final path = request.url.path;
     final segments = path.split('/');
     final resource = segments.length == 5 &&

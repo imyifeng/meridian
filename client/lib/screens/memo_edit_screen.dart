@@ -7,13 +7,22 @@ import '../editor/meridian_editor.dart';
 /// plus the category picker: memos live in exactly one taxonomy category
 /// (ADR-0002), new ones default to the built-in 未分类. Bodies that leave the
 /// v1 format set (tables and the like) display read-only instead of being
-/// degraded by the editor.
+/// degraded by the editor. The .viewer constructor is a pure reader with no
+/// server access at all — the offline way to open a cached memo (T8).
 class MemoEditScreen extends StatefulWidget {
-  final MeridianApi api;
-  final String token;
+  final MeridianApi? api;
+  final String? token;
   final Memo? memo; // null → create mode
+  final bool readOnly;
 
-  const MemoEditScreen({super.key, required this.api, required this.token, this.memo});
+  const MemoEditScreen(
+      {super.key, required this.api, required this.token, this.memo})
+      : readOnly = false;
+
+  const MemoEditScreen.viewer({super.key, required Memo this.memo})
+      : readOnly = true,
+        api = null,
+        token = null;
 
   @override
   State<MemoEditScreen> createState() => _MemoEditScreenState();
@@ -46,12 +55,15 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     _tagField = TextEditingController();
     _tags = List.of(widget.memo?.tags ?? const <String>[]);
     _categoryId = widget.memo?.categoryId;
-    _categories = widget.api.categories(widget.token);
-    _loadKnownTags();
+    // The viewer (T8) works purely from the cached memo — no server calls.
+    if (!widget.readOnly) {
+      _categories = widget.api!.categories(widget.token!);
+      _loadKnownTags();
+    }
   }
 
   void _loadKnownTags() {
-    widget.api.tags(widget.token).then((tags) {
+    widget.api!.tags(widget.token!).then((tags) {
       if (mounted) setState(() => _knownTags = tags);
     }).catchError((_) {
       // Suggestions are a convenience: an empty history beats a broken
@@ -106,10 +118,10 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     try {
       final body = _bodyEditable ? _bodyEditor.markdown : widget.memo?.body ?? '';
       if (widget.memo == null) {
-        await widget.api.createMemo(widget.token,
+        await widget.api!.createMemo(widget.token!,
             title: title, body: body, categoryId: _categoryId, tags: _tags);
       } else {
-        await widget.api.updateMemo(widget.token,
+        await widget.api!.updateMemo(widget.token!,
             id: widget.memo!.id, title: title, body: body,
             categoryId: _categoryId, tags: _tags);
       }
@@ -140,7 +152,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     if (confirmed != true) return;
     setState(() => _busy = true);
     try {
-      await widget.api.deleteMemo(widget.token, id: widget.memo!.id);
+      await widget.api!.deleteMemo(widget.token!, id: widget.memo!.id);
       if (mounted) Navigator.of(context).pop();
     } on ApiException {
       if (mounted) {
@@ -153,6 +165,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.readOnly) return _buildViewer();
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.memo == null ? '新建备忘录' : '编辑备忘录'),
@@ -232,6 +245,41 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
             _buildTagSection(),
             const SizedBox(height: 12),
             Expanded(child: _buildBodySection()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The offline reader (T8): the cached memo and nothing else — no save,
+  /// no delete, no editable field, no server traffic.
+  Widget _buildViewer() {
+    final memo = widget.memo!;
+    return Scaffold(
+      appBar: AppBar(title: const Text('查看备忘录')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(memo.title, style: Theme.of(context).textTheme.headlineSmall),
+            if (memo.tags.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final t in memo.tags) Chip(key: Key('tag_chip_$t'), label: Text(t)),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            Expanded(
+              child: MeridianDocumentReader(
+                key: const Key('body_readonly'),
+                controller: _bodyEditor,
+              ),
+            ),
           ],
         ),
       ),
@@ -321,7 +369,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   }
 
   void _reloadCategories() {
-    setState(() => _categories = widget.api.categories(widget.token));
+    setState(() => _categories = widget.api!.categories(widget.token!));
   }
 
   int? _defaultCategoryId(List<Category> categories) {
