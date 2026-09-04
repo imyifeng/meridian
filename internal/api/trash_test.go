@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -186,5 +187,55 @@ func TestTrashIsScopedToItsOwner(t *testing.T) {
 	}
 	if resp := env.Call("DELETE", "/api/v1/trash/1", bob, nil, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("bob purge: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// 恢复回"原分类"以原分类仍然存在为前提：a category deleted while its memo
+// sits in the bin takes the memo to 未分类 with it (ADR-0002 fallback), so
+// restoring never lands the memo on a dangling category.
+func TestCategoryDeletedUnderTrashedMemoFallsBackToUncategorized(t *testing.T) {
+	env := apitest.NewEnv(t)
+	administrator := env.Administrator()
+
+	var work struct {
+		ID int64 `json:"id"`
+	}
+	if resp := env.Call("POST", "/api/v1/categories", administrator.Token,
+		map[string]string{"name": "工作"}, &work); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create category: status %d, want 201", resp.StatusCode)
+	}
+	env.Call("POST", "/api/v1/memos", administrator.Token,
+		map[string]any{"title": "纪要", "category_id": work.ID}, nil)
+	env.Call("DELETE", "/api/v1/memos/1", administrator.Token, nil, nil)
+	env.Call("DELETE", fmt.Sprintf("/api/v1/categories/%d", work.ID), administrator.Token, nil, nil)
+
+	if resp := env.Call("POST", "/api/v1/trash/1/restore", administrator.Token, nil, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("restore: status %d, want 204", resp.StatusCode)
+	}
+	var cats struct {
+		Categories []struct {
+			ID        int64 `json:"id"`
+			IsBuiltIn bool  `json:"is_builtin"`
+		} `json:"categories"`
+	}
+	env.Call("GET", "/api/v1/categories", administrator.Token, nil, &cats)
+	var uncategorizedID int64
+	for _, c := range cats.Categories {
+		if c.IsBuiltIn {
+			uncategorizedID = c.ID
+		}
+	}
+	var list struct {
+		Memos []struct {
+			CategoryID int64 `json:"category_id"`
+		} `json:"memos"`
+	}
+	env.Call("GET", "/api/v1/memos", administrator.Token, nil, &list)
+	if len(list.Memos) != 1 {
+		t.Fatalf("list after restore has %d memos, want 1", len(list.Memos))
+	}
+	if list.Memos[0].CategoryID != uncategorizedID {
+		t.Errorf("restored memo category_id = %d, want built-in 未分类 %d",
+			list.Memos[0].CategoryID, uncategorizedID)
 	}
 }
