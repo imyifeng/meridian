@@ -35,10 +35,16 @@ func TestWebClientHosting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read /web/ body: %v", err)
 	}
-	// The placeholder names what is missing and how to build it — the page
-	// must never look like a broken app.
-	if !strings.Contains(string(raw), "简易客户端") ||
-		!strings.Contains(string(raw), "make web-client") {
-		t.Errorf("GET /web/: placeholder missing build hint, got %q", string(raw))
+	// The route must answer sensibly in both dist states: the placeholder on
+	// a fresh checkout (assets are build output, not tracked), the built SPA
+	// after `make web-client`.
+	body := string(raw)
+	if strings.Contains(body, "flutter_bootstrap.js") {
+		if !strings.Contains(body, `base href="/web/"`) {
+			t.Errorf("GET /web/: built index mounted under wrong base href")
+		}
+	} else if !strings.Contains(body, "简易客户端") ||
+		!strings.Contains(body, "make web-client") {
+		t.Errorf("GET /web/: placeholder missing build hint, got %q", body)
 	}
 }
