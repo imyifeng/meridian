@@ -25,6 +25,11 @@ class MemosScreen extends StatefulWidget {
 class _MemosScreenState extends State<MemosScreen> {
   late Future<MemoListData> _future;
   String? _filterTag;
+  // 全文搜索 (T6)：_searching toggles the app-bar search field,
+  // _searchQuery holds the committed query (null = not searching).
+  bool _searching = false;
+  String? _searchQuery;
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -32,10 +37,18 @@ class _MemosScreenState extends State<MemosScreen> {
     _future = _load();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<MemoListData> _load() async {
     // tag non-null asks the server for only the memos carrying it — a memo
-    // whose body never mentions the word still matches (T4).
-    final memos = await widget.api.memos(widget.token, tag: _filterTag);
+    // whose body never mentions the word still matches (T4). query non-null
+    // full-text searches title, body, and tags (T6); both narrow together.
+    final memos =
+        await widget.api.memos(widget.token, tag: _filterTag, query: _searchQuery);
     final categories = await widget.api.categories(widget.token);
     return MemoListData(memos, {for (final c in categories) c.id: c.name});
   }
@@ -98,6 +111,31 @@ class _MemosScreenState extends State<MemosScreen> {
     });
   }
 
+  void _openSearch() {
+    setState(() {
+      _searching = true;
+    });
+  }
+
+  /// Commits the search field's text; a blank query just shows everything.
+  void _runSearch(String term) {
+    final q = term.trim();
+    setState(() {
+      _searchQuery = q.isEmpty ? null : q;
+      _future = _load();
+    });
+  }
+
+  /// Leaves search mode and restores the full list.
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() {
+      _searching = false;
+      _searchQuery = null;
+      _future = _load();
+    });
+  }
+
   Future<void> _openEditor([Memo? memo]) async {
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => MemoEditScreen(api: widget.api, token: widget.token, memo: memo),
@@ -117,8 +155,34 @@ class _MemosScreenState extends State<MemosScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_filterTag == null ? 'Meridian' : '标签：$_filterTag'),
+        title: _searching
+            ? TextField(
+                key: const Key('search_field'),
+                controller: _searchController,
+                autofocus: true,
+                textInputAction: TextInputAction.search,
+                decoration: const InputDecoration(
+                  hintText: '搜索标题、正文、标签',
+                  border: InputBorder.none,
+                ),
+                onSubmitted: _runSearch,
+              )
+            : Text(_filterTag == null ? 'Meridian' : '标签：$_filterTag'),
         actions: [
+          if (_searching)
+            IconButton(
+              key: const Key('clear_search_button'),
+              icon: const Icon(Icons.close),
+              tooltip: '退出搜索',
+              onPressed: _clearSearch,
+            )
+          else
+            IconButton(
+              key: const Key('search_button'),
+              icon: const Icon(Icons.search),
+              tooltip: '搜索',
+              onPressed: _openSearch,
+            ),
           if (_filterTag != null)
             IconButton(
               key: const Key('clear_filter_button'),
@@ -168,9 +232,12 @@ class _MemosScreenState extends State<MemosScreen> {
           final memos = snapshot.data?.memos ?? const <Memo>[];
           final categoryNames = snapshot.data?.categoryNames ?? const {};
           if (memos.isEmpty) {
-            return Center(
-              child: Text(_filterTag == null ? '暂无备忘录' : '该标签下暂无备忘录'),
-            );
+            final message = _searchQuery != null
+                ? '未找到匹配的备忘录'
+                : _filterTag == null
+                    ? '暂无备忘录'
+                    : '该标签下暂无备忘录';
+            return Center(child: Text(message));
           }
           return ListView.builder(
             key: const Key('memo_list'),

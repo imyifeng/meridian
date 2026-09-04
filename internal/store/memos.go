@@ -128,6 +128,9 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	if err := insertMemoTags(tx, id, names); err != nil {
 		return nil, err
 	}
+	if err := indexMemo(tx, id, title, body, names); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -251,6 +254,17 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 			return nil, err
 		}
 	}
+	// The index tracks title, body, and tags, so it reindexes here even when
+	// only the tags or the category moved (T6).
+	finalTags := names
+	if finalTags == nil {
+		if finalTags, err = memoTagsIn(tx, memoID); err != nil {
+			return nil, err
+		}
+	}
+	if err := indexMemo(tx, memoID, title, body, finalTags); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -274,10 +288,28 @@ func (s *Store) RestoreMemo(userID, memoID int64) error {
 }
 
 // PurgeMemo removes a trashed memo and its tags (via the foreign key)
-// outright; there is no way back.
+// outright; there is no way back. Its search index row goes in the same
+// transaction (T6).
 func (s *Store) PurgeMemo(userID, memoID int64) error {
-	return s.execOneMemo("DELETE FROM memos WHERE id = ? AND user_id = ? AND deleted_at != ''",
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec("DELETE FROM memos WHERE id = ? AND user_id = ? AND deleted_at != ''",
 		memoID, userID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if err := removeFromIndex(tx, memoID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // execOneMemo runs a one-memo state change and reports ErrNotFound when it

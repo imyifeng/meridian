@@ -66,6 +66,27 @@ func (s *Store) memoTags(memoID int64) ([]string, error) {
 	return names, rows.Err()
 }
 
+// memoTagsIn is memoTags inside a transaction — the search index reindex
+// needs the tags as of this transaction, not as of a later read.
+func memoTagsIn(tx *sql.Tx, memoID int64) ([]string, error) {
+	rows, err := tx.Query(
+		"SELECT name FROM memo_tags WHERE memo_id = ? ORDER BY rowid", memoID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // TagNamesByUser lists the distinct tag names a user has used on live
 // memos, sorted — the data source for tag autocomplete (T4). Trashed memos
 // drop out until restored (T5). Tags never cross users.

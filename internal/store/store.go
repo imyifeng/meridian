@@ -50,6 +50,12 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("seed built-in category: %w", err)
 	}
+	// The search index backfills itself once: a database upgrading to T6
+	// opens with an empty memos_fts and nonempty memos (T6).
+	if err := s.repairSearchIndex(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("repair search index: %w", err)
+	}
 	return s, nil
 }
 
@@ -134,6 +140,11 @@ var migrations = []string{
 	// The bin is never emptied automatically — an aging-out policy belongs
 	// to a later ticket.
 	`ALTER TABLE memos ADD COLUMN deleted_at TEXT NOT NULL DEFAULT '';`,
+	// T6: the full-text index over title, body, and tags (one column each, so
+	// a phrase can never span two sources). rowid is the memo id; the write
+	// paths in search.go keep it in sync, and Open backfills it below on the
+	// first boot after this migration.
+	`CREATE VIRTUAL TABLE memos_fts USING fts5(title, body, tags, tokenize='unicode61');`,
 }
 
 func (s *Store) migrate() error {
