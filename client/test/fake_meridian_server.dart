@@ -151,13 +151,24 @@ class FakeMeridianServer {
     } else if (path == '/api/v1/memos' && request.method == 'GET') {
       r = await _withAuth(request, (user) async {
         final tag = request.url.queryParameters['tag'];
-        final match = tag == null || tag.isEmpty
-            ? _memos.where((m) =>
-                m['user_id'] == user && (m['deleted_at'] as String).isEmpty)
-            : _memos.where((m) =>
-                m['user_id'] == user &&
-                (m['deleted_at'] as String).isEmpty &&
-                (m['tags'] as List<String>).contains(tag));
+        // Same shape as the real server (T6): q searches title, body, and
+        // tags of the user's live memos, every whitespace-separated term
+        // ANDed; a tag on top narrows the hits.
+        final q = (request.url.queryParameters['q'] ?? '').trim();
+        final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+        var match = _memos.where((m) =>
+            m['user_id'] == user && (m['deleted_at'] as String).isEmpty);
+        bool hits(Map<String, dynamic> m) => terms.every((term) =>
+            (m['title'] as String).contains(term) ||
+            (m['body'] as String).contains(term) ||
+            (m['tags'] as List<String>).any((t) => t.contains(term)));
+        if (q.isNotEmpty) {
+          match = match.where(hits);
+        }
+        if (tag != null && tag.isNotEmpty) {
+          match = match.where(
+              (m) => (m['tags'] as List<String>).contains(tag));
+        }
         return _json(200, {'memos': match.toList()});
       });
     } else if (path == '/api/v1/memos' && request.method == 'POST') {

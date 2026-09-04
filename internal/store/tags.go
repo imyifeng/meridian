@@ -46,9 +46,16 @@ func insertMemoTags(tx *sql.Tx, memoID int64, names []string) error {
 	return nil
 }
 
-// memoTags lists one memo's tags in saved order; never nil.
-func (s *Store) memoTags(memoID int64) ([]string, error) {
-	rows, err := s.db.Query(
+// tagQuerier is the slice of database/sql a tag read needs; *sql.DB and
+// *sql.Tx both satisfy it.
+type tagQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// memoTags lists one memo's tags in saved order within q's transaction
+// scope; never nil.
+func memoTags(q tagQuerier, memoID int64) ([]string, error) {
+	rows, err := q.Query(
 		"SELECT name FROM memo_tags WHERE memo_id = ? ORDER BY rowid", memoID,
 	)
 	if err != nil {

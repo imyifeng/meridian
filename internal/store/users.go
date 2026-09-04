@@ -135,10 +135,23 @@ func (s *Store) ResetPassword(userID int64, password string) error {
 }
 
 // DeleteUser removes a user outright: memos and sessions cascade via
-// foreign keys, so nothing of the user's survives. Tags and reminders, once
-// they exist, must carry the same ON DELETE CASCADE.
+// foreign keys, so nothing of the user's survives. Their search index rows
+// go in the same transaction, since the cascade does not pass through Go
+// (T6). Tags and reminders, once they exist, must carry the same ON DELETE
+// CASCADE.
 func (s *Store) DeleteUser(userID int64) error {
-	res, err := s.db.Exec("DELETE FROM users WHERE id = ?", userID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		"DELETE FROM memos_fts WHERE rowid IN (SELECT id FROM memos WHERE user_id = ?)",
+		userID,
+	); err != nil {
+		return err
+	}
+	res, err := tx.Exec("DELETE FROM users WHERE id = ?", userID)
 	if err != nil {
 		return err
 	}
@@ -147,7 +160,7 @@ func (s *Store) DeleteUser(userID int64) error {
 	} else if n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 // SetupAdministrator creates the instance's first user inside the same

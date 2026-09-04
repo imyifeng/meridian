@@ -65,14 +65,20 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) listMemos(w http.ResponseWriter, r *http.Request) {
 	tag := r.URL.Query().Get("tag")
+	// q non-empty turns the list into a full-text search (T6); the tag
+	// filter, when also given, narrows the hits.
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	var (
 		memos []store.Memo
 		err   error
 	)
-	if tag == "" {
-		memos, err = s.st.MemosByUser(identity(r).ID)
-	} else {
+	switch {
+	case q != "":
+		memos, err = s.st.SearchMemos(identity(r).ID, q, tag)
+	case tag != "":
 		memos, err = s.st.MemosByUserAndTag(identity(r).ID, tag)
+	default:
+		memos, err = s.st.MemosByUser(identity(r).ID)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
