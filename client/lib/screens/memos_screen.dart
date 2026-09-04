@@ -64,6 +64,8 @@ class _MemosScreenState extends State<MemosScreen> {
   bool _checkingConnection = false;
   // Reminder scheduling (T9); lives as long as the signed-in list screen.
   ReminderService? _reminders;
+  // Quiet mid-session pull feeding the scheduler (T9).
+  Timer? _reminderPoll;
 
   // Every `_future = _load()` carries `..ignore()`: load errors must be
   // handled even when the FutureBuilder never subscribes because the load
@@ -78,9 +80,14 @@ class _MemosScreenState extends State<MemosScreen> {
       // what it did not see come due.
       final service = ReminderService(
           notifications: notifications, now: widget.reminderNow);
-      service.onOpen = _openFromNotification;
+      service.onOpen = _openMemo;
       _reminders = service;
       service.start();
+      // ADR-0004 bans server push, not client fetch: while this client
+      // runs, reminders set or changed on another device reach the
+      // scheduler without waiting for the user to navigate.
+      _reminderPoll = Timer.periodic(
+          ReminderService.tickInterval * 2, (_) => _pollReminders());
     }
     if (widget.initialOffline) {
       _offline = true;
@@ -93,9 +100,25 @@ class _MemosScreenState extends State<MemosScreen> {
   @override
   void dispose() {
     _reminders?.dispose();
+    _reminderPoll?.cancel();
     _retryTimer?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// One quiet poll tick: pull the full list and hand it to the scheduler,
+  /// without disturbing whatever the screen is showing. Full lists only and
+  /// online only — offline, the reconnect loop's successful _load syncs;
+  /// filtered, the page is not the whole truth.
+  Future<void> _pollReminders() async {
+    if (_offline || _filterTag != null || _searchQuery != null) return;
+    try {
+      final memos = await widget.api.memos(widget.token);
+      await _reminders?.sync(memos);
+    } on ApiException catch (e) {
+      if (e.isUnauthorized && mounted) widget.onSignOut();
+      // Unreachable: the next tick or the reconnect loop handles it.
+    }
   }
 
   /// Enters (or re-enters) offline read-only mode: poll for the connection
@@ -273,10 +296,9 @@ class _MemosScreenState extends State<MemosScreen> {
     ));
   }
 
-  /// A tapped reminder notification opens its memo, exactly like tapping
-  /// the row does: editor online, reader offline (T9).
-  Future<void> _openFromNotification(Memo memo) async {
-    if (!mounted) return;
+  /// Opens a memo: editor online, reader offline (T8). One path for the
+  /// list rows and the reminder notifications alike.
+  Future<void> _openMemo(Memo memo) async {
     if (_offline) {
       await _openReadOnlyViewer(memo);
     } else {
@@ -450,12 +472,11 @@ class _MemosScreenState extends State<MemosScreen> {
             ],
             Text(categoryNames[memo.categoryId] ?? ''),
           ]),
-          onTap: () => _offline ? _openReadOnlyViewer(memo) : _openEditor(memo),
+          onTap: () => _openMemo(memo),
         );
       },
     );
-  }
-}
+  }}
 
 /// One loaded screenful: the user's memos plus the taxonomy names, fetched
 /// together so each row can show the category it lives in.

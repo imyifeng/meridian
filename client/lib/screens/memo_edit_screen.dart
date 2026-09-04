@@ -373,8 +373,9 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     );
   }
 
-  /// Date first, then time — a future moment only: the picker offers no
-  /// yesterday, and a reminder set in the past would never fire.
+  /// Date first, then time — a future moment only. The picker offers no
+  /// yesterday, and a time at or before now is rejected here: a reminder
+  /// set in the past would sit on the memo and silently never fire.
   Future<void> _pickReminder() async {
     final now = DateTime.now();
     final current = _remindAt;
@@ -394,10 +395,14 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       helpText: '选择提醒时间',
     );
     if (!mounted || time == null) return;
-    setState(() {
-      _remindAt =
-          DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    });
+    final picked =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    if (!picked.isAfter(DateTime.now())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('提醒时间必须晚于当前时间')));
+      return;
+    }
+    setState(() => _remindAt = picked);
   }
 
   void _reloadCategories() {

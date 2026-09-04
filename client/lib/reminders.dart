@@ -28,17 +28,27 @@ abstract class ReminderNotifications {
 /// Decides when a reminder becomes a notification (T9, ADR-0004). The
 /// reminder lives on the memo and syncs with it, but firing is strictly
 /// local: a client notifies only while it runs — no server push, no
-/// background keep-alive, and a reminder that was already past when this
-/// run first saw it stays quiet instead of popping stale notices on every
-/// start. What fires is the transition this client observed: seen as a
-/// future time, then come due.
+/// background keep-alive. What fires is the due moment as this client saw
+/// it: a reminder seen as a future time fires when it comes due, and one
+/// that arrives already due fires too, provided it went due no longer than
+/// [staleGrace] ago — it was set on another device moments ago. Anything
+/// longer past is old news and stays quiet instead of popping stale
+/// notices on every start.
 class ReminderService {
   ReminderService({
     required ReminderNotifications notifications,
     DateTime Function()? now,
-    this.tickInterval = const Duration(seconds: 15),
   })  : _surface = notifications,
         _now = now ?? DateTime.now;
+
+  /// How often the running app checks whether a reminder came due; the
+  /// notice is never earlier than the due time, at most one tick late.
+  static const tickInterval = Duration(seconds: 15);
+
+  /// How recently a reminder may have gone due on arrival and still count
+  /// as news rather than history. Covers a reminder set on another device
+  /// that went due between two of this client's list syncs.
+  static const staleGrace = Duration(minutes: 2);
 
   /// Called when the user taps a reminder notification; [memo] is the memo
   /// the notice was about. Set by whoever can open it — the memo list
@@ -48,18 +58,21 @@ class ReminderService {
   final ReminderNotifications _surface;
   final DateTime Function() _now;
 
-  /// How often the running app checks whether a reminder came due; the
-  /// notice is never earlier than the due time, at most one tick late.
-  final Duration tickInterval;
-
   Timer? _ticker;
   bool _started = false;
 
   /// The reminders armed this run: memo id -> the remindAt they were armed
   /// with. Firing removes an entry, so it happens exactly once; a memo
-  /// whose reminder changes disarms and — if still future — re-arms.
+  /// whose reminder changes disarms and — if still current — re-arms.
   final Map<int, DateTime> _armed = {};
+  /// The (memo id, remindAt) pairs already fired this run, so a freshly
+  /// due reminder that keeps re-arriving in every offline retry's sync is
+  /// not re-armed by the grace rule and popped again.
+  final Set<String> _fired = {};
   Map<int, Memo> _latest = const {};
+
+  static String _key(int id, DateTime at) =>
+      '$id:${at.millisecondsSinceEpoch}';
 
   Future<void> start() async {
     if (_started) return;
@@ -84,9 +97,13 @@ class ReminderService {
         if (m.remindAt != null) m.id: m.remindAt!,
     };
     _armed.removeWhere((id, at) => desired[id] != at);
+    final now = _now();
     for (final entry in desired.entries) {
-      if (!_armed.containsKey(entry.key) && entry.value.isAfter(_now())) {
-        _armed[entry.key] = entry.value;
+      final key = _key(entry.key, entry.value);
+      if (_armed.containsKey(entry.key) || _fired.contains(key)) continue;
+      final at = entry.value;
+      if (at.isAfter(now) || now.difference(at) <= staleGrace) {
+        _armed[entry.key] = at;
       }
     }
     _fireDue();
@@ -99,7 +116,8 @@ class ReminderService {
         if (!entry.value.isAfter(now)) entry.key,
     ];
     for (final id in due) {
-      _armed.remove(id);
+      final at = _armed.remove(id)!;
+      _fired.add(_key(id, at));
       final memo = _latest[id];
       if (memo != null) {
         // One late notice must not stall the tick loop.

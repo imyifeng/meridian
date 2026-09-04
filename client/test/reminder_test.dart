@@ -166,6 +166,51 @@ void main() {
     expect(fake.remindAtOf('交房租'), isNull);
   });
 
+  testWidgets('选择已过去的时刻被拒绝，提醒不会静默失效', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    await loginAsYifeng(tester, fake);
+
+    await tester.tap(find.byKey(const Key('new_memo_button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('title_field')), '交房租');
+    // Today at 00:00 — in the past unless the test runs at midnight.
+    await tester.tap(find.byKey(const Key('set_reminder_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(CalendarDatePicker),
+      matching: find.text('${DateTime.now().day}'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    final fields = find.descendant(
+      of: find.byType(TimePickerDialog),
+      matching: find.byType(TextField),
+    );
+    // 12:00 AM is today at midnight — in the past unless the test runs at
+    // that exact minute. (A bare 00 hour is invalid in the 12-hour picker
+    // and makes OK return null instead of a time.)
+    await tester.enterText(fields.first, '12');
+    await tester.enterText(fields.last, '00');
+    if (find.text('AM').evaluate().isNotEmpty) {
+      await tester.tap(find.text('AM'));
+      await tester.pump();
+    }
+    await tester.tap(find.descendant(
+      of: find.byType(TimePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('提醒时间必须晚于当前时间'), findsOneWidget);
+    expect(find.byKey(const Key('reminder_value')), findsNothing);
+    expect(find.byKey(const Key('set_reminder_button')), findsOneWidget);
+  });
+
   testWidgets('其他设备设置的提醒出现在列表与查看页', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
@@ -203,6 +248,23 @@ void main() {
     final titleField =
         tester.widget<TextField>(find.byKey(const Key('title_field')));
     expect(titleField.controller!.text, '开会');
+  });
+
+  testWidgets('另一台设备设置的提醒到达运行中的客户端并触发', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    var clock = DateTime(2026, 9, 4, 12, 0, 0);
+    fake.seedMemo('yifeng', '开会'); // this device has not touched it
+    final notifications = await loginAsYifeng(tester, fake, now: () => clock);
+    expect(notifications.shown, isEmpty);
+
+    // Another device sets a reminder that goes due between this client's
+    // list loads; the quiet poll picks it up and the notice still fires.
+    fake.setMemoReminder('yifeng', '开会', clock.add(const Duration(seconds: 40)));
+    clock = clock.add(const Duration(minutes: 1));
+    await tester.pump(ReminderService.tickInterval * 2 + const Duration(seconds: 1));
+
+    expect(notifications.shown.map((m) => m.title), ['开会']);
   });
 
   testWidgets('打开时已过期的提醒不再触发；被取消的提醒解除调度', (tester) async {
