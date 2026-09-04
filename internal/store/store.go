@@ -145,6 +145,10 @@ var migrations = []string{
 	// paths in search.go keep it in sync, and Open backfills it below on the
 	// first boot after this migration.
 	`CREATE VIRTUAL TABLE memos_fts USING fts5(title, body, tags, tokenize='unicode61');`,
+	// T9: the one-shot reminder, '' for none. It rides the memo row — a
+	// property of the memo, not of any device (ADR-0004) — so every client
+	// that can read the memo can schedule the same notification.
+	`ALTER TABLE memos ADD COLUMN remind_at TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {

@@ -26,10 +26,10 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if _, err := s.CreateMemo(u.ID, "升级前的旧笔记", "正文里没有关键词", 0, []string{"英语"}); err != nil {
+	if _, err := s.CreateMemo(u.ID, "升级前的旧笔记", "正文里没有关键词", 0, []string{"英语"}, nil); err != nil {
 		t.Fatalf("create memo: %v", err)
 	}
-	if _, err := s.CreateMemo(u.ID, "已删除的笔记", "", 0, nil); err != nil {
+	if _, err := s.CreateMemo(u.ID, "已删除的笔记", "", 0, nil, nil); err != nil {
 		t.Fatalf("create memo: %v", err)
 	}
 	if err := s.DeleteMemo(u.ID, 2); err != nil {
@@ -39,13 +39,18 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	// Roll the file back to its pre-T6 shape: no index table, version 7.
+	// Roll the file back to its pre-T6 shape: no index table, no reminder
+	// column, version 7. Reopening then runs the FTS and reminder migrations
+	// in order — the upgrade path both later tickets ride.
 	raw, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("open raw: %v", err)
 	}
 	if _, err := raw.Exec(`DROP TABLE memos_fts`); err != nil {
 		t.Fatalf("drop fts: %v", err)
+	}
+	if _, err := raw.Exec(`ALTER TABLE memos DROP COLUMN remind_at`); err != nil {
+		t.Fatalf("drop remind_at: %v", err)
 	}
 	if _, err := raw.Exec(`PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("set version: %v", err)
