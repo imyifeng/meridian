@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:super_editor/super_editor_test.dart';
 
 import 'package:meridian/app.dart';
 import 'package:meridian/token_store.dart';
 
 import 'fake_meridian_server.dart';
+
+// Focuses the WYSIWYG body and types into it like a keyboard would.
+Future<void> typeBody(WidgetTester tester, String text) async {
+  await tester.tap(find.byKey(const Key('body_editor')));
+  await tester.pumpAndSettle();
+  await tester.typeImeText(text);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   testWidgets('登录 → 创建备忘录 → 列表显示', (tester) async {
@@ -32,7 +41,7 @@ void main() {
     await tester.tap(find.byKey(const Key('new_memo_button')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('title_field')), '购物清单');
-    await tester.enterText(find.byKey(const Key('body_field')), '牛奶、鸡蛋');
+    await typeBody(tester, '牛奶、鸡蛋');
     await tester.tap(find.byKey(const Key('save_button')));
     await tester.pumpAndSettle();
 
@@ -184,7 +193,7 @@ void main() {
     await tester.tap(find.byKey(const Key('new_memo_button')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('title_field')), '重启不丢');
-    await tester.enterText(find.byKey(const Key('body_field')), '还在');
+    await typeBody(tester, '还在');
     await tester.tap(find.byKey(const Key('save_button')));
     await tester.pumpAndSettle();
     expect(find.text('重启不丢'), findsOneWidget);

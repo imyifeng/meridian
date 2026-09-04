@@ -84,6 +84,11 @@ class FakeMeridianServer {
 
   Map<String, dynamic> userByName(String username) => _users[username]!;
 
+  /// The body currently stored for the first memo titled [title] — lets
+  /// tests assert exactly what a save exported over the wire.
+  String bodyOf(String title) =>
+      _memos.firstWhere((m) => m['title'] == title)['body'] as String;
+
   /// Pre-seeds a category, standing in for console management.
   Map<String, dynamic> createCategory(String name) {
     final category = {

@@ -36,7 +36,11 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   flutter_secure_storage: ^11.0.0
-
+  # Pinned exact: 0.3.0-dev.x carries the built-in Markdown codec we depend
+  # on (H1–H3-capped header conversion, task serialization, table round
+  # trip); a caret range would let a dev-channel bump change the export
+  # format underneath stored memos (ADR-0006).
+  super_editor: 0.3.0-dev.52
 dev_dependencies:
   flutter_test:
     sdk: flutter
