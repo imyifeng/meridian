@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:super_editor/super_editor.dart';
 import 'package:super_editor/super_editor_test.dart';
 
 import 'package:meridian/app.dart';
@@ -10,7 +9,7 @@ import 'fake_meridian_server.dart';
 
 // Focuses the WYSIWYG body and types into it like a keyboard would.
 Future<void> typeBody(WidgetTester tester, String text) async {
-  await tester.tap(find.byType(SuperEditor));
+  await tester.tap(find.byKey(const Key('body_editor')));
   await tester.pumpAndSettle();
   await tester.typeImeText(text);
   await tester.pumpAndSettle();

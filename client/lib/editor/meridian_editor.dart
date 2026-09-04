@@ -7,6 +7,8 @@
 // displayed read-only, never silently degraded: round-trip losslessness is
 // promised only inside the format set.
 
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -27,28 +29,31 @@ const _allowedInlineIds = {'bold', 'italics', 'strikethrough', 'code'};
 
 /// A parsed memo body: the document the editor renders, plus whether the
 /// content stays inside the v1 format set.
-class MeridianDocument {
+class _ParsedBody {
   final MutableDocument document;
   final bool withinFormatSet;
 
-  const MeridianDocument(this.document, this.withinFormatSet);
+  const _ParsedBody(this.document, this.withinFormatSet);
 }
 
 /// Parses stored Markdown into an editor document. Node ids are rebuilt as
 /// deterministic `n0, n1, …` so the surface is addressable (and testable)
 /// without touching UUID internals.
-MeridianDocument parseMeridianMarkdown(String markdown) {
+_ParsedBody _parseBody(String markdown) {
   final raw = deserializeMarkdownToDocument(markdown);
 
   var within = true;
   final rebuilt = <DocumentNode>[];
-  for (var i = 0; i < raw.nodeCount; i++) {
+  for (var i = 0; i < raw.nodeCount && within; i++) {
     final node = raw.getNodeAt(i)!;
+    if (node is! TextNode || !_withinInlineSet(node.text)) {
+      within = false;
+      break;
+    }
     final id = 'n$i';
     if (node is ParagraphNode) {
       final blockType = node.getMetadataValue('blockType') as Attribution?;
-      if (!_allowedBlockTypeIds.contains(blockType?.id) ||
-          !_withinInlineSet(node.text)) {
+      if (!_allowedBlockTypeIds.contains(blockType?.id)) {
         within = false;
         break;
       }
@@ -59,10 +64,6 @@ MeridianDocument parseMeridianMarkdown(String markdown) {
         metadata: {'blockType': blockType},
       ));
     } else if (node is ListItemNode) {
-      if (!_withinInlineSet(node.text)) {
-        within = false;
-        break;
-      }
       rebuilt.add(ListItemNode(
         id: id,
         itemType: node.type,
@@ -70,10 +71,6 @@ MeridianDocument parseMeridianMarkdown(String markdown) {
         indent: node.indent,
       ));
     } else if (node is TaskNode) {
-      if (!_withinInlineSet(node.text)) {
-        within = false;
-        break;
-      }
       rebuilt.add(TaskNode(
         id: id,
         text: node.text,
@@ -81,21 +78,17 @@ MeridianDocument parseMeridianMarkdown(String markdown) {
         indent: node.indent,
       ));
     } else {
+      // Images, horizontal rules, tables and anything unknown.
       within = false;
       break;
     }
   }
 
-  return MeridianDocument(
+  return _ParsedBody(
     within ? MutableDocument(nodes: rebuilt) : raw,
     within,
   );
 }
-
-/// Serializes the document back to the canonical clean Markdown that is
-/// stored on the server.
-String serializeMeridianDocument(Document document) =>
-    serializeDocumentToMarkdown(document);
 
 bool _withinInlineSet(AttributedText text) {
   final length = text.toPlainText().length;
@@ -128,11 +121,12 @@ class _DocumentChanges with ChangeNotifier implements EditListener {
 }
 
 /// Owns the editor pipeline for one open memo body: the document, the edit
-/// history, and the Markdown view of the current content.
+/// history, the toolbar's format operations, and the Markdown view of the
+/// current content.
 class MeridianEditorController {
   MeridianEditorController(String initialMarkdown)
-      : parsed = parseMeridianMarkdown(initialMarkdown) {
-    document = parsed.document;
+      : _parsed = _parseBody(initialMarkdown) {
+    document = _parsed.document;
     composer = MutableDocumentComposer();
     editor = Editor(
       editables: {
@@ -141,8 +135,8 @@ class MeridianEditorController {
       },
       requestHandlers: List.from(defaultRequestHandlers),
       // Curated for the v1 format set: typed `# ` prefixes become headings
-      // but cap at H3, and the image / horizontal-rule conversions are gone,
-      // so nothing beyond the format set can be typed in.
+      // but cap at H3, and the image / horizontal-rule / em-dash conversions
+      // are gone, so nothing beyond the format set can be typed in.
       reactionPipeline: [
         UpdateComposerTextStylesReaction(),
         const LinkifyReaction(),
@@ -150,20 +144,19 @@ class MeridianEditorController {
         const UnorderedListItemConversionReaction(),
         const OrderedListItemConversionReaction(),
         const BlockquoteConversionReaction(),
-        const DashConversionReaction(),
         UpdateSubTaskIndentAfterTaskDeletionReaction(),
       ],
       isHistoryEnabled: true,
     );
   }
 
-  final MeridianDocument parsed;
+  final _ParsedBody _parsed;
   late final MutableDocument document;
   late final Editor editor;
   late final MutableDocumentComposer composer;
   late final _DocumentChanges _documentChanges = _DocumentChanges(editor);
 
-  bool get withinFormatSet => parsed.withinFormatSet;
+  bool get withinFormatSet => _parsed.withinFormatSet;
 
   /// Fires on every document or selection change — the toolbar listens to
   /// it for its active states.
@@ -171,7 +164,7 @@ class MeridianEditorController {
       Listenable.merge([_documentChanges, composer, composer.preferences]);
 
   /// The current content as clean Markdown.
-  String get markdown => serializeMeridianDocument(document);
+  String get markdown => serializeDocumentToMarkdown(document);
 
   /// The text node the selection starts in, if any.
   TextNode? get selectedNode {
@@ -179,6 +172,162 @@ class MeridianEditorController {
     if (selection == null) return null;
     final node = document.getNodeById(selection.base.nodeId);
     return node is TextNode ? node : null;
+  }
+
+  /// The link covering the expanded selection, if the whole selection
+  /// carries one.
+  LinkAttribution? get selectedLink {
+    final selection = composer.selection;
+    if (selection == null || selection.isCollapsed) return null;
+    if (selection.base.nodeId != selection.extent.nodeId) return null;
+    final node = document.getNodeById(selection.base.nodeId);
+    if (node is! TextNode) return null;
+    final start = (selection.base.nodePosition as TextNodePosition).offset;
+    final end = (selection.extent.nodePosition as TextNodePosition).offset;
+    // Attribution ranges are end-exclusive; the "throughout" query is not.
+    return node.text
+        .getAllAttributionsThroughout(
+            SpanRange(min(start, end), max(start, end) - 1))
+        .whereType<LinkAttribution>()
+        .firstOrNull;
+  }
+
+  // Block formats apply to the caret's node: tapping the active style again
+  // returns the node to a plain paragraph, Word-style.
+  void toggleBlockType(Attribution type) {
+    final node = selectedNode;
+    if (node == null) return;
+    if (node is ParagraphNode) {
+      final current = node.getMetadataValue('blockType') as Attribution?;
+      editor.execute([
+        ChangeParagraphBlockTypeRequest(
+          nodeId: node.id,
+          blockType: current == type ? paragraphAttribution : type,
+        ),
+      ]);
+      return;
+    }
+    // List items and tasks become paragraphs carrying the block type.
+    _replaceNode(
+      node,
+      ParagraphNode(
+        id: node.id,
+        text: node.text,
+        indent: _indentOf(node),
+        metadata: {'blockType': type},
+      ),
+    );
+  }
+
+  void toggleList(ListItemType type) {
+    final node = selectedNode;
+    if (node == null) return;
+    if (node is ListItemNode && node.type == type) {
+      _toParagraph(node);
+      return;
+    }
+    _replaceNode(
+      node,
+      ListItemNode(
+        id: node.id,
+        itemType: type,
+        text: node.text,
+        indent: _indentOf(node),
+      ),
+    );
+  }
+
+  void toggleTodo() {
+    final node = selectedNode;
+    if (node == null) return;
+    if (node is TaskNode) {
+      _toParagraph(node);
+      return;
+    }
+    _replaceNode(
+      node,
+      TaskNode(
+        id: node.id,
+        text: node.text,
+        isComplete: false,
+        indent: _indentOf(node),
+      ),
+    );
+  }
+
+  // With a collapsed caret the toggle styles what gets typed next; with an
+  // expanded selection it styles the selection.
+  void toggleInlineAttribution(Attribution attribution) {
+    final selection = composer.selection;
+    if (selection == null) return;
+    if (selection.isCollapsed) {
+      composer.preferences.toggleStyle(attribution);
+      return;
+    }
+    editor.execute([
+      ToggleTextAttributionsRequest(
+        documentRange: selection,
+        attributions: {attribution},
+      ),
+    ]);
+  }
+
+  bool hasInlineAttribution(Attribution attribution) {
+    final selection = composer.selection;
+    if (selection == null) return false;
+    if (selection.isCollapsed) {
+      return composer.preferences.currentAttributions.contains(attribution);
+    }
+    if (selection.base.nodeId != selection.extent.nodeId) return false;
+    final node = document.getNodeById(selection.base.nodeId);
+    if (node is! TextNode) return false;
+    final start = (selection.base.nodePosition as TextNodePosition).offset;
+    final end = (selection.extent.nodePosition as TextNodePosition).offset;
+    // Attribution ranges are end-exclusive; the "throughout" query is not.
+    return node.text
+        .getAllAttributionsThroughout(
+            SpanRange(min(start, end), max(start, end) - 1))
+        .contains(attribution);
+  }
+
+  // The selection is gone by the time a link dialog closes (focus loss
+  // clears it), so these apply to a range captured before opening it.
+  void addLink(DocumentRange range, String url) {
+    editor.execute([
+      AddTextAttributionsRequest(
+        documentRange: range,
+        attributions: {LinkAttribution(url)},
+      ),
+    ]);
+  }
+
+  void removeLink(DocumentRange range, LinkAttribution link) {
+    editor.execute([
+      RemoveTextAttributionsRequest(
+        documentRange: range,
+        attributions: {link},
+      ),
+    ]);
+  }
+
+  static int _indentOf(TextNode node) => switch (node) {
+        ParagraphNode(:final indent) => indent,
+        ListItemNode(:final indent) => indent,
+        TaskNode(:final indent) => indent,
+        _ => 0,
+      };
+
+  void _replaceNode(DocumentNode oldNode, DocumentNode newNode) {
+    editor.execute([
+      ReplaceNodeRequest(existingNodeId: oldNode.id, newNode: newNode),
+    ]);
+  }
+
+  void _toParagraph(TextNode node) {
+    _replaceNode(
+      node,
+      ParagraphNode(id: node.id, text: node.text, indent: _indentOf(node)),
+    );
   }
 
   void dispose() {
@@ -262,7 +411,8 @@ class _MeridianEditorState extends State<MeridianEditor> {
             isSelected:
                 node is ListItemNode && node.type == ListItemType.unordered,
             icon: const Icon(Icons.format_list_bulleted),
-            onPressed: () => _toggleList(ListItemType.unordered),
+            onPressed: () =>
+                _controller.toggleList(ListItemType.unordered),
           ),
           IconButton(
             key: const Key('fmt_ol'),
@@ -270,14 +420,14 @@ class _MeridianEditorState extends State<MeridianEditor> {
             isSelected:
                 node is ListItemNode && node.type == ListItemType.ordered,
             icon: const Icon(Icons.format_list_numbered),
-            onPressed: () => _toggleList(ListItemType.ordered),
+            onPressed: () => _controller.toggleList(ListItemType.ordered),
           ),
           IconButton(
             key: const Key('fmt_todo'),
             tooltip: '待办',
             isSelected: node is TaskNode,
             icon: const Icon(Icons.checklist),
-            onPressed: _toggleTodo,
+            onPressed: _controller.toggleTodo,
           ),
           _blockButton(
               'fmt_quote', Icons.format_quote, '引用', blockquoteAttribution,
@@ -289,7 +439,7 @@ class _MeridianEditorState extends State<MeridianEditor> {
             key: const Key('fmt_link'),
             tooltip: '链接',
             icon: const Icon(Icons.link),
-            onPressed: _applyLink,
+            onPressed: _editLink,
           ),
         ],
       ),
@@ -304,7 +454,7 @@ class _MeridianEditorState extends State<MeridianEditor> {
       tooltip: tooltip,
       isSelected: active,
       icon: Icon(icon),
-      onPressed: () => _toggleBlockType(type),
+      onPressed: () => _controller.toggleBlockType(type),
     );
   }
 
@@ -313,167 +463,82 @@ class _MeridianEditorState extends State<MeridianEditor> {
     return IconButton(
       key: Key(key),
       tooltip: tooltip,
-      isSelected: _hasInlineAttribution(attribution),
+      isSelected: _controller.hasInlineAttribution(attribution),
       icon: Icon(icon),
-      onPressed: () => _toggleInlineAttribution(attribution),
+      onPressed: () => _controller.toggleInlineAttribution(attribution),
     );
   }
 
-  // Block formats apply to the caret's node: tapping the active style again
-  // returns the node to a plain paragraph, Word-style.
-  void _toggleBlockType(Attribution type) {
-    final node = _controller.selectedNode;
-    if (node == null) return;
-    if (node is ParagraphNode) {
-      final current = node.getMetadataValue('blockType') as Attribution?;
-      _controller.editor.execute([
-        ChangeParagraphBlockTypeRequest(
-          nodeId: node.id,
-          blockType: current == type ? paragraphAttribution : type,
-        ),
-      ]);
-      return;
-    }
-    // List items and tasks become paragraphs carrying the block type.
-    _replaceNode(node, ParagraphNode(
-      id: node.id,
-      text: node.text,
-      indent: _indentOf(node),
-      metadata: {'blockType': type},
-    ));
-  }
-
-  static int _indentOf(TextNode node) => switch (node) {
-        ParagraphNode(:final indent) => indent,
-        ListItemNode(:final indent) => indent,
-        TaskNode(:final indent) => indent,
-        _ => 0,
-      };
-
-  void _replaceNode(DocumentNode oldNode, DocumentNode newNode) {
-    _controller.editor.execute([
-      ReplaceNodeRequest(existingNodeId: oldNode.id, newNode: newNode),
-    ]);
-  }
-
-  void _toParagraph(TextNode node) {
-    _replaceNode(
-      node,
-      ParagraphNode(id: node.id, text: node.text, indent: _indentOf(node)),
-    );
-  }
-
-  void _toggleList(ListItemType type) {
-    final node = _controller.selectedNode;
-    if (node == null) return;
-    if (node is ListItemNode && node.type == type) {
-      _toParagraph(node);
-      return;
-    }
-    _replaceNode(
-      node,
-      ListItemNode(
-        id: node.id,
-        itemType: type,
-        text: node.text,
-        indent: _indentOf(node),
-      ),
-    );
-  }
-
-  void _toggleTodo() {
-    final node = _controller.selectedNode;
-    if (node == null) return;
-    if (node is TaskNode) {
-      _toParagraph(node);
-      return;
-    }
-    _replaceNode(
-      node,
-      TaskNode(
-        id: node.id,
-        text: node.text,
-        isComplete: false,
-        indent: _indentOf(node),
-      ),
-    );
-  }
-
-  // With a collapsed caret the toggle styles what gets typed next; with an
-  // expanded selection it styles the selection.
-  void _toggleInlineAttribution(Attribution attribution) {
-    final composer = _controller.composer;
-    final selection = composer.selection;
-    if (selection == null) return;
-    if (selection.isCollapsed) {
-      composer.preferences.toggleStyle(attribution);
-      return;
-    }
-    _controller.editor.execute([
-      ToggleTextAttributionsRequest(
-        documentRange: selection,
-        attributions: {attribution},
-      ),
-    ]);
-  }
-
-  bool _hasInlineAttribution(Attribution attribution) {
-    final composer = _controller.composer;
-    final selection = composer.selection;
-    if (selection == null) return false;
-    if (selection.isCollapsed) {
-      return composer.preferences.currentAttributions.contains(attribution);
-    }
-    if (selection.base.nodeId != selection.extent.nodeId) return false;
-    final node = _controller.document.getNodeById(selection.base.nodeId);
-    if (node is! TextNode) return false;
-    final start = (selection.base.nodePosition as TextNodePosition).offset;
-    final end = (selection.extent.nodePosition as TextNodePosition).offset;
-    return node.text
-        .getAllAttributionsThroughout(SpanRange(start, end))
-        .contains(attribution);
-  }
-
-  Future<void> _applyLink() async {
-    final composer = _controller.composer;
-    final selection = composer.selection;
+  Future<void> _editLink() async {
+    final selection = _controller.composer.selection;
     if (selection == null || selection.isCollapsed) return;
-    final url = await showDialog<String>(
+    final existing = _controller.selectedLink;
+    // String: the URL to apply; the `remove` sentinel: strip the link; null:
+    // cancelled.
+    final result = await showDialog<Object>(
       context: context,
-      builder: (context) {
-        final field = TextEditingController();
-        return AlertDialog(
-          title: const Text('添加链接'),
-          content: TextField(
-            key: const Key('link_url_field'),
-            controller: field,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '链接地址'),
-            onSubmitted: (value) => Navigator.of(context).pop(value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              key: const Key('link_apply'),
-              onPressed: () => Navigator.of(context).pop(field.text),
-              child: const Text('应用'),
-            ),
-          ],
-        );
-      },
+      builder: (context) => _LinkDialog(existingUrl: existing?.plainTextUri),
     );
-    if (url == null || url.trim().isEmpty) return;
-    // The selection is gone by the time the dialog closes (focus loss
-    // clears it), so apply to the range captured before opening it.
-    _controller.editor.execute([
-      AddTextAttributionsRequest(
-        documentRange: selection,
-        attributions: {LinkAttribution(url.trim())},
+    if (result == 'remove') {
+      _controller.removeLink(selection, existing!);
+      return;
+    }
+    if (result is! String) return;
+    final trimmed = result.trim();
+    if (trimmed.isEmpty) return;
+    _controller.addLink(selection, trimmed);
+  }
+}
+
+/// The link dialog; owns its text field's controller so it survives the
+/// route's exit animation.
+class _LinkDialog extends StatefulWidget {
+  final String? existingUrl;
+
+  const _LinkDialog({this.existingUrl});
+
+  @override
+  State<_LinkDialog> createState() => _LinkDialogState();
+}
+
+class _LinkDialogState extends State<_LinkDialog> {
+  late final _field = TextEditingController(text: widget.existingUrl);
+
+  @override
+  void dispose() {
+    _field.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existingUrl == null ? '添加链接' : '编辑链接'),
+      content: TextField(
+        key: const Key('link_url_field'),
+        controller: _field,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: '链接地址'),
+        onSubmitted: (value) => Navigator.of(context).pop(value),
       ),
-    ]);
+      actions: [
+        if (widget.existingUrl != null)
+          TextButton(
+            key: const Key('link_remove'),
+            onPressed: () => Navigator.of(context).pop('remove'),
+            child: const Text('移除链接'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('link_apply'),
+          onPressed: () => Navigator.of(context).pop(_field.text),
+          child: const Text('应用'),
+        ),
+      ],
+    );
   }
 }
 

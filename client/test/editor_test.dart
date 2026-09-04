@@ -168,6 +168,27 @@ void main() {
     expect(fake.bodyOf('代码块'), '```\nprint(1)\n```');
   });
 
+  testWidgets('选中已有链接可移除，保存导出纯文本', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '链接笔记', body: 'see [docs](https://d.example) now');
+    await loginAsYifeng(tester, fake);
+
+    await openMemo(tester, '链接笔记');
+    await tester.doubleTapInParagraph('n0', 6); // docs
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('fmt_link')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('fmt_link')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('link_remove')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    expect(fake.bodyOf('链接笔记'), 'see docs now');
+  });
+
   testWidgets('格式集内往返无损：原样打开再保存，正文逐字不变', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
@@ -195,6 +216,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fake.bodyOf('清单'), '- [x] 买牛奶');
+  });
+
+  testWidgets('待办项可取消勾选，状态同样被保存', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '清单', body: '- [x] 已买牛奶');
+    await loginAsYifeng(tester, fake);
+
+    await openMemo(tester, '清单');
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    expect(fake.bodyOf('清单'), '- [ ] 已买牛奶');
   });
 
   testWidgets('含表格的备忘录只读展示、不崩溃，保存不破坏正文', (tester) async {
