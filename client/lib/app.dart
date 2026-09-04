@@ -36,6 +36,12 @@ class MeridianApp extends StatefulWidget {
   /// Clock override for reminder scheduling tests.
   final DateTime Function()? reminderNow;
 
+  /// The Web 简易客户端 mode (T10): the build is served by the instance
+  /// itself, so the API is same-origin and no server-address field is
+  /// offered — and reminders, a 客户端 feature, get no editing entry
+  /// points on the web.
+  final bool webClient;
+
   const MeridianApp({
     super.key,
     required this.baseUrl,
@@ -44,6 +50,7 @@ class MeridianApp extends StatefulWidget {
     this.apiClient,
     this.reminderNotifications,
     this.reminderNow,
+    this.webClient = false,
   });
 
   @override
@@ -166,12 +173,14 @@ class _MeridianAppState extends State<MeridianApp> {
         AppState.setup => SetupScreen(
             serverAddress: _serverAddress,
             api: _api(),
+            showServerAddress: !widget.webClient,
             onAuthenticated: _authenticated,
             onAlreadyInitialized: () => setState(() => _state = AppState.login),
           ),
         AppState.login => LoginScreen(
             serverAddress: _serverAddress,
             api: _api(),
+            showServerAddress: !widget.webClient,
             onAuthenticated: _authenticated,
           ),
         AppState.memos => MemosScreen(
@@ -181,6 +190,7 @@ class _MeridianAppState extends State<MeridianApp> {
             initialOffline: _offline,
             reminderNotifications: widget.reminderNotifications,
             reminderNow: widget.reminderNow,
+            showReminder: !widget.webClient,
             onSignOut: _signedOut,
           ),
         AppState.error => _errorScaffold(),

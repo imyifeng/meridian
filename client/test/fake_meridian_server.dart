@@ -112,6 +112,11 @@ class FakeMeridianServer {
   String bodyOf(String title) =>
       _memos.firstWhere((m) => m['title'] == title)['body'] as String;
 
+  /// The raw stored map for the first memo titled [title] — lets tests
+  /// assert fields bodyOf and remindAtOf do not cover (tags, category).
+  Map<String, dynamic> memoByTitle(String title) =>
+      _memos.firstWhere((m) => m['title'] == title);
+
   /// Pre-seeds a category, standing in for console management.
   Map<String, dynamic> createCategory(String name) {
     final category = {

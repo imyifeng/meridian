@@ -9,6 +9,9 @@ import 'credentials_form.dart';
 class SetupScreen extends StatelessWidget {
   final TextEditingController serverAddress;
   final MeridianApi api;
+
+  /// False in the Web 简易客户端 (T10): same-origin, no address field.
+  final bool showServerAddress;
   final Future<void> Function(Session session) onAuthenticated;
 
   /// The wizard only closes by completing setup — or by discovering the
@@ -20,6 +23,7 @@ class SetupScreen extends StatelessWidget {
     super.key,
     required this.serverAddress,
     required this.api,
+    this.showServerAddress = true,
     required this.onAuthenticated,
     required this.onAlreadyInitialized,
   });
@@ -30,6 +34,7 @@ class SetupScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('初始化 Meridian')),
       body: CredentialsForm(
         serverAddress: serverAddress,
+        showServerAddress: showServerAddress,
         submitLabel: '创建管理员',
         buttonKey: 'create_administrator_button',
         onSubmit: (username, password) async {

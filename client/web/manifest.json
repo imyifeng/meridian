@@ -1,11 +1,11 @@
 {
-    "name": "Meridian 管理控制台",
+    "name": "Meridian",
     "short_name": "Meridian",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#00897B",
     "theme_color": "#00897B",
-    "description": "Meridian Web 管理控制台",
+    "description": "Meridian",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

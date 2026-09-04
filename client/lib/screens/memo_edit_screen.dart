@@ -15,8 +15,18 @@ class MemoEditScreen extends StatefulWidget {
   final String token;
   final Memo? memo; // null → create mode
 
-  const MemoEditScreen(
-      {super.key, required this.api, required this.token, this.memo});
+  /// False in the Web 简易客户端 (T10): the reminder row is not offered.
+  /// A memo's standing reminder still rides along untouched — [updateMemo]
+  /// always sends the field, so hiding the UI must not clear the data.
+  final bool showReminder;
+
+  const MemoEditScreen({
+    super.key,
+    required this.api,
+    required this.token,
+    this.showReminder = true,
+    this.memo,
+  });
 
   @override
   State<MemoEditScreen> createState() => _MemoEditScreenState();
@@ -238,8 +248,10 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
             ),
             const SizedBox(height: 12),
             _buildTagSection(),
-            const SizedBox(height: 12),
-            _buildReminderSection(),
+            if (widget.showReminder) ...[
+              const SizedBox(height: 12),
+              _buildReminderSection(),
+            ],
             const SizedBox(height: 12),
             Expanded(child: _buildBodySection()),
           ],

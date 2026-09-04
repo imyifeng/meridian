@@ -32,6 +32,10 @@ class MemosScreen extends StatefulWidget {
   /// Clock override for reminder tests; production uses the wall clock.
   final DateTime Function()? reminderNow;
 
+  /// False in the Web 简易客户端 (T10): memos open without the reminder
+  /// editing entry — there, reminders are a 客户端 feature.
+  final bool showReminder;
+
   final VoidCallback onSignOut;
 
   const MemosScreen({
@@ -42,6 +46,7 @@ class MemosScreen extends StatefulWidget {
     this.initialOffline = false,
     this.reminderNotifications,
     this.reminderNow,
+    this.showReminder = true,
     required this.onSignOut,
   });
 
@@ -284,7 +289,11 @@ class _MemosScreenState extends State<MemosScreen> {
 
   Future<void> _openEditor([Memo? memo]) async {
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => MemoEditScreen(api: widget.api, token: widget.token, memo: memo),
+      builder: (_) => MemoEditScreen(
+          api: widget.api,
+          token: widget.token,
+          showReminder: widget.showReminder,
+          memo: memo),
     ));
     _reload();
   }

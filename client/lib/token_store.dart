@@ -2,7 +2,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Where the client keeps its long-lived credential between runs: platform
 /// secure storage in production (Windows 凭据管理 / Android Keystore 体系),
-/// in-memory in widget tests.
+/// in-memory wherever the session is the lifetime — widget tests, and the
+/// Web 简易客户端, whose credential dies with the browser tab (T10).
 abstract class TokenStore {
   Future<String?> read();
   Future<void> write(String token);
