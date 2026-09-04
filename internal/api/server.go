@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/imyifeng/meridian/internal/store"
+	"github.com/imyifeng/meridian/internal/webclient"
 	"github.com/imyifeng/meridian/internal/webconsole"
 )
 
@@ -43,6 +44,8 @@ func NewHandler(st *store.Store) http.Handler {
 	mux.Handle("GET /{$}", http.RedirectHandler("/console/", http.StatusFound))
 	mux.Handle("GET /console", http.RedirectHandler("/console/", http.StatusFound))
 	mux.Handle("GET /console/", http.StripPrefix("/console", webconsole.Handler()))
+	mux.Handle("GET /web", http.RedirectHandler("/web/", http.StatusFound))
+	mux.Handle("GET /web/", http.StripPrefix("/web", webclient.Handler()))
 	return mux
 }
 

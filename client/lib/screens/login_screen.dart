@@ -8,12 +8,16 @@ import 'credentials_form.dart';
 class LoginScreen extends StatelessWidget {
   final TextEditingController serverAddress;
   final MeridianApi api;
+
+  /// False in the Web 简易客户端 (T10): same-origin, no address field.
+  final bool showServerAddress;
   final Future<void> Function(Session session) onAuthenticated;
 
   const LoginScreen({
     super.key,
     required this.serverAddress,
     required this.api,
+    this.showServerAddress = true,
     required this.onAuthenticated,
   });
 
@@ -23,6 +27,7 @@ class LoginScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('登录 Meridian')),
       body: CredentialsForm(
         serverAddress: serverAddress,
+        showServerAddress: showServerAddress,
         submitLabel: '登录',
         buttonKey: 'login_button',
         onSubmit: (username, password) async {
