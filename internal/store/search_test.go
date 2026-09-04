@@ -54,7 +54,8 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 		t.Fatalf("close raw: %v", err)
 	}
 
-	// Reopening runs migration 6 and backfills the index.
+	// Reopening runs the FTS migration (the one after the version set
+	// above) and backfills the index.
 	reopened, err := store.Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)

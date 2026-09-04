@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/imyifeng/meridian/internal/api/apitest"
@@ -40,15 +41,6 @@ func search(t *testing.T, env *apitest.Env, token, q string) []string {
 	return titles
 }
 
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
 // The ticket's three sources each get a hit, users stay isolated, and the
 // recycle bin stays out of the results (T6).
 func TestSearchHitsTitleBodyAndTag(t *testing.T) {
@@ -69,7 +61,7 @@ func TestSearchHitsTitleBodyAndTag(t *testing.T) {
 	if got := search(t, env, administrator.Token, "abandon"); len(got) != 1 || got[0] != "购物清单" {
 		t.Errorf("body hit = %v, want [购物清单]", got)
 	}
-	if got := search(t, env, administrator.Token, "英语"); len(got) != 2 || !contains(got, "周末安排") || !contains(got, "英语学习笔记") {
+	if got := search(t, env, administrator.Token, "英语"); len(got) != 2 || !slices.Contains(got, "周末安排") || !slices.Contains(got, "英语学习笔记") {
 		t.Errorf("tag+title hit = %v, want 周末安排 and 英语学习笔记", got)
 	}
 	if got := search(t, env, bobToken, "英语"); len(got) != 1 || got[0] != "英语学习笔记" {

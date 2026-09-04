@@ -152,15 +152,17 @@ class FakeMeridianServer {
       r = await _withAuth(request, (user) async {
         final tag = request.url.queryParameters['tag'];
         // Same shape as the real server (T6): q searches title, body, and
-        // tags of the user's live memos; a tag on top narrows the hits.
+        // tags of the user's live memos, every whitespace-separated term
+        // ANDed; a tag on top narrows the hits.
         final q = (request.url.queryParameters['q'] ?? '').trim();
+        final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
         var match = _memos.where((m) =>
             m['user_id'] == user && (m['deleted_at'] as String).isEmpty);
+        bool hits(Map<String, dynamic> m) => terms.every((term) =>
+            (m['title'] as String).contains(term) ||
+            (m['body'] as String).contains(term) ||
+            (m['tags'] as List<String>).any((t) => t.contains(term)));
         if (q.isNotEmpty) {
-          bool hits(Map<String, dynamic> m) =>
-              (m['title'] as String).contains(q) ||
-              (m['body'] as String).contains(q) ||
-              (m['tags'] as List<String>).any((t) => t.contains(q));
           match = match.where(hits);
         }
         if (tag != null && tag.isNotEmpty) {

@@ -46,30 +46,16 @@ func insertMemoTags(tx *sql.Tx, memoID int64, names []string) error {
 	return nil
 }
 
-// memoTags lists one memo's tags in saved order; never nil.
-func (s *Store) memoTags(memoID int64) ([]string, error) {
-	rows, err := s.db.Query(
-		"SELECT name FROM memo_tags WHERE memo_id = ? ORDER BY rowid", memoID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	names := make([]string, 0)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names = append(names, name)
-	}
-	return names, rows.Err()
+// tagQuerier is the slice of database/sql a tag read needs; *sql.DB and
+// *sql.Tx both satisfy it.
+type tagQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// memoTagsIn is memoTags inside a transaction — the search index reindex
-// needs the tags as of this transaction, not as of a later read.
-func memoTagsIn(tx *sql.Tx, memoID int64) ([]string, error) {
-	rows, err := tx.Query(
+// memoTags lists one memo's tags in saved order within q's transaction
+// scope; never nil.
+func memoTags(q tagQuerier, memoID int64) ([]string, error) {
+	rows, err := q.Query(
 		"SELECT name FROM memo_tags WHERE memo_id = ? ORDER BY rowid", memoID,
 	)
 	if err != nil {

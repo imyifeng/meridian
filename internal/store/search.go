@@ -18,16 +18,30 @@ import (
 // FTS-special user input is neutralized by the quoting, so a search for
 // `NEAR(a) *` is just a phrase, never syntax.
 
-// The FTS5 table lives in migration 6 (store.go). Every write path that
-// touches a memo's indexed text — CreateMemo, UpdateMemo, PurgeMemo,
-// DeleteUser's cascade — keeps it in sync via indexMemo/removeFromIndex;
-// repairSearchIndex reindexes wholesale when the counts drift (the one-time
-// backfill for databases that predate the table is exactly such a drift).
+// The FTS5 table is created by the last migration in store.go. Every write
+// path that touches a memo's indexed text — CreateMemo, UpdateMemo,
+// PurgeMemo, DeleteUser's cascade — keeps it in sync via
+// indexMemo/removeFromIndex; repairSearchIndex reindexes wholesale when the
+// counts drift (the one-time backfill for databases that predate the table
+// is exactly such a drift).
 
-// memosFTSColumns are the three indexed sources, joined the way indexMemo
-// fills them: tags as one space-separated string.
+// memosFTSRow are the three indexed texts the way indexMemo fills them:
+// CJK-spaced, tags joined into one space-separated string.
 func memosFTSRow(title, body string, tags []string) (string, string, string) {
 	return spaced(title), spaced(body), spaced(strings.Join(tags, " "))
+}
+
+// ftsInsert writes one row into memos_fts; all three texts must already be
+// CJK-spaced. Shared by the incremental and the wholesale paths so the row
+// shape lives in exactly one place.
+func ftsInsert(w interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}, memoID int64, spacedTitle, spacedBody, spacedTags string) error {
+	_, err := w.Exec(
+		"INSERT INTO memos_fts (rowid, title, body, tags) VALUES (?, ?, ?, ?)",
+		memoID, spacedTitle, spacedBody, spacedTags,
+	)
+	return err
 }
 
 // indexMemo replaces one memo's row in the search index inside the caller's
@@ -37,12 +51,8 @@ func indexMemo(tx *sql.Tx, memoID int64, title, body string, tags []string) erro
 	if _, err := tx.Exec("DELETE FROM memos_fts WHERE rowid = ?", memoID); err != nil {
 		return err
 	}
-	ftsTitle, ftsBody, ftsTags := memosFTSRow(title, body, tags)
-	_, err := tx.Exec(
-		"INSERT INTO memos_fts (rowid, title, body, tags) VALUES (?, ?, ?, ?)",
-		memoID, ftsTitle, ftsBody, ftsTags,
-	)
-	return err
+	spacedTitle, spacedBody, spacedTags := memosFTSRow(title, body, tags)
+	return ftsInsert(tx, memoID, spacedTitle, spacedBody, spacedTags)
 }
 
 // removeFromIndex drops a purged memo's index row inside the caller's
@@ -150,31 +160,29 @@ func (s *Store) repairSearchIndex() error {
 	if err != nil {
 		return err
 	}
-	type row struct {
-		id   int64
-		text [3]string
+	type indexedMemo struct {
+		id          int64
+		title, body string
+		spacedTags  string
 	}
-	var backlog []row
+	var backlog []indexedMemo
 	for rows.Next() {
-		var r row
+		var m indexedMemo
 		var tags sql.NullString
-		if err := rows.Scan(&r.id, &r.text[0], &r.text[1], &tags); err != nil {
+		if err := rows.Scan(&m.id, &m.title, &m.body, &tags); err != nil {
 			rows.Close()
 			return err
 		}
-		r.text[2] = spaced(tags.String)
-		backlog = append(backlog, r)
+		m.spacedTags = spaced(tags.String)
+		backlog = append(backlog, m)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	for _, r := range backlog {
-		if _, err := tx.Exec(
-			"INSERT INTO memos_fts (rowid, title, body, tags) VALUES (?, ?, ?, ?)",
-			r.id, spaced(r.text[0]), spaced(r.text[1]), r.text[2],
-		); err != nil {
+	for _, m := range backlog {
+		if err := ftsInsert(tx, m.id, spaced(m.title), spaced(m.body), m.spacedTags); err != nil {
 			return err
 		}
 	}

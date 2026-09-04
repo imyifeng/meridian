@@ -201,7 +201,7 @@ func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 	if err != nil {
 		return nil, err
 	}
-	names, err := s.memoTags(m.ID)
+	names, err := memoTags(s.db, m.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 	// only the tags or the category moved (T6).
 	finalTags := names
 	if finalTags == nil {
-		if finalTags, err = memoTagsIn(tx, memoID); err != nil {
+		if finalTags, err = memoTags(tx, memoID); err != nil {
 			return nil, err
 		}
 	}
