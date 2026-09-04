@@ -262,6 +262,13 @@ class Category {
         name: json['name'] as String,
         isBuiltin: json['is_builtin'] as bool? ?? false,
       );
+
+  /// The API wire shape, shared by the offline snapshot's encoding.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'is_builtin': isBuiltin,
+      };
 }
 
 class Memo {
@@ -293,6 +300,15 @@ class Memo {
           for (final t in json['tags'] as List? ?? []) t as String,
         ],
       );
+
+  /// The API wire shape, shared by the offline snapshot's encoding.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'body': body,
+        'category_id': categoryId,
+        'tags': tags,
+      };
 }
 
 class ApiException implements Exception {

@@ -7,13 +7,15 @@ import '../editor/meridian_editor.dart';
 /// plus the category picker: memos live in exactly one taxonomy category
 /// (ADR-0002), new ones default to the built-in 未分类. Bodies that leave the
 /// v1 format set (tables and the like) display read-only instead of being
-/// degraded by the editor.
+/// degraded by the editor. Offline reading is MemoViewScreen's job (T8),
+/// not a mode of this screen.
 class MemoEditScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
   final Memo? memo; // null → create mode
 
-  const MemoEditScreen({super.key, required this.api, required this.token, this.memo});
+  const MemoEditScreen(
+      {super.key, required this.api, required this.token, this.memo});
 
   @override
   State<MemoEditScreen> createState() => _MemoEditScreenState();
