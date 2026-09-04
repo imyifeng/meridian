@@ -129,6 +129,11 @@ var migrations = []string{
 		name    TEXT NOT NULL,
 		PRIMARY KEY (memo_id, name)
 	);`,
+	// T5: the recycle bin. deleted_at is '' for a live memo and the deletion
+	// timestamp once trashed; restoring clears it, purging removes the row.
+	// The bin is never emptied automatically — an aging-out policy belongs
+	// to a later ticket.
+	`ALTER TABLE memos ADD COLUMN deleted_at TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {

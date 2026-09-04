@@ -180,6 +180,26 @@ class MeridianApi {
   Future<void> deleteMemo(String token, {required int id}) async {
     await _request('DELETE', '/api/v1/memos/$id', token: token);
   }
+
+  /// The recycle bin (T5): the user's own trashed memos, most recently
+  /// deleted first. The bin never empties itself.
+  Future<List<Memo>> trash(String token) async {
+    final body = await _request('GET', '/api/v1/trash', token: token);
+    return [
+      for (final m in body['memos'] as List? ?? [])
+        Memo.fromJson(m as Map<String, dynamic>),
+    ];
+  }
+
+  /// Takes a trashed memo back out; it reappears in its original category.
+  Future<void> restoreMemo(String token, {required int id}) async {
+    await _request('POST', '/api/v1/trash/$id/restore', token: token);
+  }
+
+  /// Removes a trashed memo for good; there is no way back.
+  Future<void> purgeMemo(String token, {required int id}) async {
+    await _request('DELETE', '/api/v1/trash/$id', token: token);
+  }
 }
 
 class Session {

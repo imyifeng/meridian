@@ -120,7 +120,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除备忘录'),
-        content: const Text('删除后无法找回。确定删除吗？'),
+        content: const Text('删除后会移入回收站，可在回收站中恢复。'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
           FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('删除')),
@@ -148,7 +148,12 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
         title: Text(widget.memo == null ? '新建备忘录' : '编辑备忘录'),
         actions: [
           if (widget.memo != null)
-            IconButton(icon: const Icon(Icons.delete_outline), tooltip: '删除', onPressed: _busy ? null : _delete),
+            IconButton(
+              key: const Key('delete_button'),
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除',
+              onPressed: _busy ? null : _delete,
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
