@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../editor/meridian_editor.dart';
 
-/// Plain-text title + body editor for creating and editing a memo, plus the
-/// category picker: memos live in exactly one taxonomy category (ADR-0002),
-/// new ones default to the built-in 未分类. The WYSIWYG editor is a later
-/// ticket.
+/// Title + WYSIWYG body editor (ADR-0006) for creating and editing a memo,
+/// plus the category picker: memos live in exactly one taxonomy category
+/// (ADR-0002), new ones default to the built-in 未分类. Bodies that leave the
+/// v1 format set (tables and the like) display read-only instead of being
+/// degraded by the editor.
 class MemoEditScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
@@ -19,9 +21,13 @@ class MemoEditScreen extends StatefulWidget {
 
 class _MemoEditScreenState extends State<MemoEditScreen> {
   late final TextEditingController _title;
-  late final TextEditingController _body;
   late final TextEditingController _tagField;
   late Future<List<Category>> _categories;
+  // The body's editor pipeline: parses the stored Markdown once and owns the
+  // document while the screen is open. The body itself is only written to
+  // storage at save time, serialized as clean Markdown.
+  late final MeridianEditorController _bodyEditor =
+      MeridianEditorController(widget.memo?.body ?? '');
   // The memo's tags, edited locally and saved as a whole; plus the user's
   // own tag history, the autocomplete source (T4).
   List<String> _tags = const [];
@@ -29,11 +35,14 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   int? _categoryId;
   bool _busy = false;
 
+  /// Out-of-format bodies are displayed read-only and must reach storage
+  /// byte-for-byte — only in-format bodies serialize through the editor.
+  bool get _bodyEditable => _bodyEditor.withinFormatSet;
+
   @override
   void initState() {
     super.initState();
     _title = TextEditingController(text: widget.memo?.title ?? '');
-    _body = TextEditingController(text: widget.memo?.body ?? '');
     _tagField = TextEditingController();
     _tags = List.of(widget.memo?.tags ?? const <String>[]);
     _categoryId = widget.memo?.categoryId;
@@ -54,8 +63,8 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   @override
   void dispose() {
     _title.dispose();
-    _body.dispose();
     _tagField.dispose();
+    _bodyEditor.dispose();
     super.dispose();
   }
 
@@ -95,12 +104,13 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     }
     setState(() => _busy = true);
     try {
+      final body = _bodyEditable ? _bodyEditor.markdown : widget.memo?.body ?? '';
       if (widget.memo == null) {
         await widget.api.createMemo(widget.token,
-            title: title, body: _body.text, categoryId: _categoryId, tags: _tags);
+            title: title, body: body, categoryId: _categoryId, tags: _tags);
       } else {
         await widget.api.updateMemo(widget.token,
-            id: widget.memo!.id, title: title, body: _body.text,
+            id: widget.memo!.id, title: title, body: body,
             categoryId: _categoryId, tags: _tags);
       }
       if (mounted) Navigator.of(context).pop();
@@ -221,24 +231,44 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
             const SizedBox(height: 12),
             _buildTagSection(),
             const SizedBox(height: 12),
-            Expanded(
-              child: TextField(
-                controller: _body,
-                key: const Key('body_field'),
-                decoration: const InputDecoration(
-                  labelText: '正文',
-                  alignLabelWithHint: true,
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-                enabled: !_busy,
-              ),
-            ),
+            Expanded(child: _buildBodySection()),
           ],
         ),
       ),
+    );
+  }
+
+  /// The body area: an editable WYSIWYG surface for in-format memos, or a
+  /// read-only rendering plus a notice for anything leaving the v1 format
+  /// set (ADR-0006) — such content is displayed, never degraded.
+  Widget _buildBodySection() {
+    if (_bodyEditable) {
+      return MeridianEditor(
+        key: const Key('body_editor'),
+        controller: _bodyEditor,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          key: const Key('readonly_notice'),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Text(
+              '正文含有当前版本之外的样式（如表格），以只读方式展示',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ),
+        Expanded(
+          child: MeridianDocumentReader(
+            key: const Key('body_readonly'),
+            controller: _bodyEditor,
+          ),
+        ),
+      ],
     );
   }
 

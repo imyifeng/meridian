@@ -36,7 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   flutter_secure_storage: ^11.0.0
-
+  super_editor: 0.3.0-dev.52
 dev_dependencies:
   flutter_test:
     sdk: flutter
