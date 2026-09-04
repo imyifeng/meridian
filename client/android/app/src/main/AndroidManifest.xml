@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Reminder notifications (T9): the runtime ask happens at app start;
+         this manifest entry declares it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Meridian"
         android:name="${applicationName}"

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../editor/meridian_editor.dart';
+import '../reminders.dart';
 
 /// The offline reader (T8): a cached memo opened without a server — title,
 /// tags, and a read-only body. Nothing here writes or fetches; editing only
@@ -38,6 +39,19 @@ class _MemoViewScreenState extends State<MemoViewScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(memo.title, style: Theme.of(context).textTheme.headlineSmall),
+            if (memo.remindAt != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.alarm, size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    '提醒：${formatReminder(memo.remindAt!)}',
+                    key: const Key('reminder_value'),
+                  ),
+                ],
+              ),
+            ],
             if (memo.tags.isNotEmpty) ...[
               const SizedBox(height: 8),
               Wrap(

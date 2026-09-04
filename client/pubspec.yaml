@@ -41,6 +41,7 @@ dependencies:
   # trip); a caret range would let a dev-channel bump change the export
   # format underneath stored memos (ADR-0006).
   super_editor: 0.3.0-dev.52
+  flutter_local_notifications: ^22.3.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

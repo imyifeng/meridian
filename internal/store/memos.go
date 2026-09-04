@@ -25,20 +25,44 @@ type Memo struct {
 	// in the recycle bin (T5); the zero value marshals as
 	// 0001-01-01T00:00:00Z.
 	DeletedAt time.Time `json:"deleted_at"`
+	// RemindAt is the memo's one-shot reminder (T9): nil is no reminder and
+	// marshals as null. It belongs to the memo, not to any device, so every
+	// client that sees the memo sees the same reminder (ADR-0004).
+	RemindAt *time.Time `json:"remind_at"`
 }
 
-const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at, deleted_at"
+const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at, deleted_at, remind_at"
 
 func scanMemo(row interface{ Scan(...any) error }) (Memo, error) {
 	var m Memo
-	var created, updated, deleted string
-	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated, &deleted); err != nil {
+	var created, updated, deleted, remind string
+	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated, &deleted, &remind); err != nil {
 		return Memo{}, err
 	}
 	m.CreatedAt = parseTime(created)
 	m.UpdatedAt = parseTime(updated)
 	m.DeletedAt = parseTime(deleted)
+	m.RemindAt = remindAtPtr(remind)
 	return m, nil
+}
+
+// remindAtPtr decodes the remind_at column: the empty string is no
+// reminder.
+func remindAtPtr(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	t := parseTime(s)
+	return &t
+}
+
+// formatRemindAt encodes the remind_at column; nil and the zero time (the
+// API clear value) both encode as the empty string.
+func formatRemindAt(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(nowFormat)
 }
 
 // scanMemos drains a memo query; tags are attached separately by attachTags.
@@ -93,8 +117,9 @@ func (s *Store) attachTags(userID int64, memos []Memo) error {
 // CreateMemo inserts a memo owned by userID. categoryID 0 means "no explicit
 // category": the memo falls back to the built-in 未分类. Any other value must
 // name an existing category, or ErrCategoryNotFound comes back. tags may be
-// nil (no tags) and is normalized; ErrInvalidTag reports bad names.
-func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, tags []string) (*Memo, error) {
+// nil (no tags) and is normalized; ErrInvalidTag reports bad names. remindAt
+// nil starts with no reminder (T9).
+func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, tags []string, remindAt *time.Time) (*Memo, error) {
 	names, err := normalizeTags(tags)
 	if err != nil {
 		return nil, err
@@ -108,6 +133,7 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	} else if !ok {
 		return nil, ErrCategoryNotFound
 	}
+	remind := formatRemindAt(remindAt)
 	ts := now()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -115,8 +141,8 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(
-		"INSERT INTO memos (user_id, category_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-		userID, categoryID, title, body, ts, ts,
+		"INSERT INTO memos (user_id, category_id, title, body, remind_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		userID, categoryID, title, body, remind, ts, ts,
 	)
 	if err != nil {
 		return nil, err
@@ -134,7 +160,7 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &Memo{
+	m := &Memo{
 		ID:         id,
 		UserID:     userID,
 		Title:      title,
@@ -143,7 +169,9 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 		Tags:       names,
 		CreatedAt:  parseTime(ts),
 		UpdatedAt:  parseTime(ts),
-	}, nil
+		RemindAt:   remindAtPtr(remind),
+	}
+	return m, nil
 }
 
 // MemosByUser lists a user's live memos, newest first; trashed ones stay in
@@ -211,10 +239,11 @@ func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 
 // UpdateMemo rewrites title and body of a user's own live memo, moves it to
 // categoryID when that is nonzero (it must exist; 0 leaves the category as
-// it was), and replaces the tag set when tags is non-nil — an empty list
-// removes every tag. nil leaves the tags as they were. A trashed memo is
-// out of reach until restored (T5).
-func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID int64, tags []string) (*Memo, error) {
+// it was), replaces the tag set when tags is non-nil — an empty list
+// removes every tag, nil leaves the tags as they were — and sets the
+// reminder when remindAt is non-nil (a zero time clears it; nil keeps the
+// standing one, T9). A trashed memo is out of reach until restored (T5).
+func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID int64, tags []string, remindAt *time.Time) (*Memo, error) {
 	var names []string
 	if tags != nil {
 		var err error
@@ -229,14 +258,18 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 			return nil, ErrCategoryNotFound
 		}
 	}
+	var remindArg any // nil keeps the standing remind_at (COALESCE)
+	if remindAt != nil {
+		remindArg = formatRemindAt(remindAt)
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(
-		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
-		title, body, categoryID, categoryID, now(), memoID, userID,
+		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, remind_at = COALESCE(?, remind_at), updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
+		title, body, categoryID, categoryID, remindArg, now(), memoID, userID,
 	)
 	if err != nil {
 		return nil, err

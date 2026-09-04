@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app.dart';
 import 'memo_cache.dart';
+import 'reminders_plugin.dart';
 import 'token_store.dart';
 
 void main() {
@@ -12,5 +13,6 @@ void main() {
         defaultValue: 'http://127.0.0.1:8080'),
     tokenStore: SecureTokenStore(),
     memoCache: SecureMemoCache(),
+    reminderNotifications: createReminderNotifications(),
   ));
 }

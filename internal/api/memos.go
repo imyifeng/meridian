@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imyifeng/meridian/internal/store"
 )
@@ -18,23 +19,41 @@ type memoInput struct {
 	// Tags nil means "not specified": create starts with no tags, update
 	// keeps the current ones. Present (even empty) replaces the whole set.
 	Tags *[]string `json:"tags"`
+	// RemindAt is the memo's one-shot reminder (T9), an RFC3339 timestamp.
+	// nil means "not specified": create starts with none, update keeps the
+	// standing one. The empty string clears it; anything unparseable is a
+	// 400, never silently dropped.
+	RemindAt *string `json:"remind_at"`
 }
 
-func (in memoInput) validate() (title, body string, categoryID int64, tags []string, ok bool) {
+func (in memoInput) validate() (title, body string, categoryID int64, tags []string, remindAt *time.Time, ok bool) {
 	title = strings.TrimSpace(in.Title)
 	if title == "" {
-		return "", "", 0, nil, false
+		return "", "", 0, nil, nil, false
 	}
 	if in.CategoryID != nil {
 		if *in.CategoryID <= 0 {
-			return "", "", 0, nil, false
+			return "", "", 0, nil, nil, false
 		}
 		categoryID = *in.CategoryID
 	}
 	if in.Tags != nil {
 		tags = *in.Tags
 	}
-	return title, in.Body, categoryID, tags, true
+	if in.RemindAt != nil {
+		if *in.RemindAt == "" {
+			// A zero time is the "clear" value: the store writes '' for it.
+			clear := time.Time{}
+			remindAt = &clear
+		} else {
+			t, err := time.Parse(time.RFC3339, *in.RemindAt)
+			if err != nil {
+				return "", "", 0, nil, nil, false
+			}
+			remindAt = &t
+		}
+	}
+	return title, in.Body, categoryID, tags, remindAt, true
 }
 
 func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
@@ -42,12 +61,12 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	title, body, categoryID, tags, ok := in.validate()
+	title, body, categoryID, tags, remindAt, ok := in.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.CreateMemo(identity(r).ID, title, body, categoryID, tags)
+	m, err := s.st.CreateMemo(identity(r).ID, title, body, categoryID, tags, remindAt)
 	if errors.Is(err, store.ErrCategoryNotFound) {
 		writeError(w, http.StatusBadRequest, "unknown_category")
 		return
@@ -140,12 +159,12 @@ func (s *server) updateMemo(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	title, body, categoryID, tags, ok := in.validate()
+	title, body, categoryID, tags, remindAt, ok := in.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body, categoryID, tags)
+	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body, categoryID, tags, remindAt)
 	if errors.Is(err, store.ErrCategoryNotFound) {
 		writeError(w, http.StatusBadRequest, "unknown_category")
 		return
