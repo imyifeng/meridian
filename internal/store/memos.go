@@ -21,18 +21,23 @@ type Memo struct {
 	// structs directly; time.Time marshals as RFC3339.
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// DeletedAt is zero for a live memo and the deletion time once it sits
+	// in the recycle bin (T5); the zero value marshals as
+	// 0001-01-01T00:00:00Z.
+	DeletedAt time.Time `json:"deleted_at"`
 }
 
-const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at"
+const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at, deleted_at"
 
 func scanMemo(row interface{ Scan(...any) error }) (Memo, error) {
 	var m Memo
-	var created, updated string
-	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated); err != nil {
+	var created, updated, deleted string
+	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated, &deleted); err != nil {
 		return Memo{}, err
 	}
 	m.CreatedAt = parseTime(created)
 	m.UpdatedAt = parseTime(updated)
+	m.DeletedAt = parseTime(deleted)
 	return m, nil
 }
 
@@ -138,10 +143,11 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	}, nil
 }
 
-// MemosByUser lists a user's memos, newest first.
+// MemosByUser lists a user's live memos, newest first; trashed ones stay in
+// the recycle bin (T5).
 func (s *Store) MemosByUser(userID int64) ([]Memo, error) {
 	rows, err := s.db.Query(
-		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND deleted_at = '' ORDER BY created_at DESC, id DESC",
 		userID,
 	)
 	if err != nil {
@@ -162,7 +168,7 @@ func (s *Store) MemosByUser(userID int64) ([]Memo, error) {
 // never has to mention the word (T4).
 func (s *Store) MemosByUserAndTag(userID int64, tag string) ([]Memo, error) {
 	rows, err := s.db.Query(
-		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND id IN (SELECT memo_id FROM memo_tags WHERE name = ?) ORDER BY created_at DESC, id DESC",
+		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND deleted_at = '' AND id IN (SELECT memo_id FROM memo_tags WHERE name = ?) ORDER BY created_at DESC, id DESC",
 		userID, tag,
 	)
 	if err != nil {
@@ -178,11 +184,12 @@ func (s *Store) MemosByUserAndTag(userID int64, tag string) ([]Memo, error) {
 	return memos, nil
 }
 
-// MemoByID fetches one memo; userID scopes the lookup so another user's
-// memo is indistinguishable from a missing one.
+// MemoByID fetches one live memo; userID scopes the lookup so another
+// user's memo — or one of their trashed ones — is indistinguishable from a
+// missing one.
 func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 	m, err := scanMemo(s.db.QueryRow(
-		"SELECT "+memoColumns+" FROM memos WHERE id = ? AND user_id = ?",
+		"SELECT "+memoColumns+" FROM memos WHERE id = ? AND user_id = ? AND deleted_at = ''",
 		memoID, userID,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -199,10 +206,11 @@ func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 	return &m, nil
 }
 
-// UpdateMemo rewrites title and body of a user's own memo, moves it to
+// UpdateMemo rewrites title and body of a user's own live memo, moves it to
 // categoryID when that is nonzero (it must exist; 0 leaves the category as
 // it was), and replaces the tag set when tags is non-nil — an empty list
-// removes every tag. nil leaves the tags as they were.
+// removes every tag. nil leaves the tags as they were. A trashed memo is
+// out of reach until restored (T5).
 func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID int64, tags []string) (*Memo, error) {
 	var names []string
 	if tags != nil {
@@ -224,7 +232,7 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(
-		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, updated_at = ? WHERE id = ? AND user_id = ?",
+		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
 		title, body, categoryID, categoryID, now(), memoID, userID,
 	)
 	if err != nil {
@@ -249,11 +257,34 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 	return s.MemoByID(userID, memoID)
 }
 
-// DeleteMemo removes a memo outright; the recycle bin arrives in a later
-// ticket and will replace this hard delete with a soft one. Its tags go with
-// it via the foreign key.
+// DeleteMemo moves a memo to the recycle bin (T5): a soft delete that
+// stamps deleted_at, keeping the row — its category and tags included —
+// until it is restored or purged. Deleting it again (or touching it at all
+// through the live-memo paths) reports ErrNotFound.
 func (s *Store) DeleteMemo(userID, memoID int64) error {
-	res, err := s.db.Exec("DELETE FROM memos WHERE id = ? AND user_id = ?", memoID, userID)
+	return s.execOneMemo("UPDATE memos SET deleted_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
+		now(), memoID, userID)
+}
+
+// RestoreMemo takes a memo out of the recycle bin. Its category and tags
+// were never touched, so it reappears exactly as it went in.
+func (s *Store) RestoreMemo(userID, memoID int64) error {
+	return s.execOneMemo("UPDATE memos SET deleted_at = '' WHERE id = ? AND user_id = ? AND deleted_at != ''",
+		memoID, userID)
+}
+
+// PurgeMemo removes a trashed memo and its tags (via the foreign key)
+// outright; there is no way back.
+func (s *Store) PurgeMemo(userID, memoID int64) error {
+	return s.execOneMemo("DELETE FROM memos WHERE id = ? AND user_id = ? AND deleted_at != ''",
+		memoID, userID)
+}
+
+// execOneMemo runs a one-memo state change and reports ErrNotFound when it
+// matched nothing — another user's memo, a missing one, or one on the wrong
+// side of the trash line.
+func (s *Store) execOneMemo(query string, args ...any) error {
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
@@ -263,4 +294,23 @@ func (s *Store) DeleteMemo(userID, memoID int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// TrashedMemos lists a user's recycle bin, most recently deleted first.
+func (s *Store) TrashedMemos(userID int64) ([]Memo, error) {
+	rows, err := s.db.Query(
+		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND deleted_at != '' ORDER BY deleted_at DESC, id DESC",
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	memos, err := scanMemos(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachTags(userID, memos); err != nil {
+		return nil, err
+	}
+	return memos, nil
 }

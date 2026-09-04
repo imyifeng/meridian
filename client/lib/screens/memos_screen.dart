@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import 'memo_edit_screen.dart';
+import 'trash_screen.dart';
 
 /// The memo list: every memo of the signed-in user, newest first, each with
 /// its taxonomy category (ADR-0002).
@@ -104,6 +105,14 @@ class _MemosScreenState extends State<MemosScreen> {
     _reload();
   }
 
+  /// The recycle bin (T5); anything may have come back out of it.
+  Future<void> _openTrash() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => TrashScreen(api: widget.api, token: widget.token),
+    ));
+    _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -122,6 +131,12 @@ class _MemosScreenState extends State<MemosScreen> {
             icon: const Icon(Icons.filter_list),
             tooltip: '按标签筛选',
             onPressed: _pickFilter,
+          ),
+          IconButton(
+            key: const Key('trash_button'),
+            icon: const Icon(Icons.delete_outline),
+            tooltip: '回收站',
+            onPressed: _openTrash,
           ),
           IconButton(icon: const Icon(Icons.logout), tooltip: '退出登录', onPressed: widget.onSignOut),
         ],

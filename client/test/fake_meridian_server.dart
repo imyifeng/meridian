@@ -5,7 +5,8 @@ import 'package:http/testing.dart';
 
 /// In-process fake of the Meridian HTTP API, same shape as the real Go
 /// server: /api/v1/instance, /api/v1/setup/administrator, /api/v1/auth/login,
-/// /api/v1/categories, /api/v1/memos, /api/v1/users. UI seam tests drive the
+/// /api/v1/categories, /api/v1/memos, /api/v1/trash, /api/v1/tags,
+/// /api/v1/users. UI seam tests drive the
 /// real widget tree with the app's real HTTP layer (request building, JSON,
 /// status handling) pointed at this fake via an injected http.Client — widget
 /// tests cannot open real sockets, but they can run this in-process handler.
@@ -53,16 +54,17 @@ class FakeMeridianServer {
 
   /// Pre-seeds a memo owned by [username], standing in for that user's client.
   void seedMemo(String username, String title,
-      {String? body, List<String>? tags}) {
+      {String? body, List<String>? tags, int? categoryId}) {
     _memos.add({
       'id': _nextMemoId++,
       'user_id': username,
-      'category_id': uncategorizedId,
+      'category_id': categoryId ?? uncategorizedId,
       'title': title,
       'body': body ?? '',
       'tags': tags != null ? _normalizeTags(tags)! : <String>[],
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'deleted_at': '',
     });
   }
 
@@ -102,7 +104,8 @@ class FakeMeridianServer {
     final resource = segments.length == 5 &&
             (segments[3] == 'memos' ||
                 segments[3] == 'categories' ||
-                segments[3] == 'users')
+                segments[3] == 'users' ||
+                segments[3] == 'trash')
         ? segments[3]
         : null;
     final resourceId = resource != null ? int.tryParse(segments[4]) : null;
@@ -122,18 +125,38 @@ class FakeMeridianServer {
       r = await _withAuth(request, (user) async => _createCategory(request, user));
     } else if (resource == 'categories' && request.method == 'DELETE') {
       r = await _withAuth(request, (user) async => _deleteCategory(user, resourceId));
+    } else if (path == '/api/v1/trash' && request.method == 'GET') {
+      r = await _withAuth(request, (user) async => _json(200, {
+            'memos': _memos
+                .where((m) => m['user_id'] == user && (m['deleted_at'] as String).isNotEmpty)
+                .toList(),
+          }));
+    } else if (segments.length == 6 &&
+        segments[3] == 'trash' &&
+        segments[5] == 'restore' &&
+        request.method == 'POST') {
+      r = await _withAuth(request, (user) async => _restoreMemo(user, int.tryParse(segments[4])));
+    } else if (resource == 'trash' && request.method == 'DELETE') {
+      r = await _withAuth(request, (user) async => _purgeMemo(user, resourceId));
     } else if (resource == 'memos' && request.method == 'GET') {
       r = await _withAuth(request, (user) async {
-        final match = _memos.where((m) => m['id'] == resourceId && m['user_id'] == user).toList();
+        final match = _memos
+            .where((m) =>
+                m['id'] == resourceId &&
+                m['user_id'] == user &&
+                (m['deleted_at'] as String).isEmpty)
+            .toList();
         return match.isEmpty ? _json(404, {'error': 'not_found'}) : _json(200, match.first);
       });
     } else if (path == '/api/v1/memos' && request.method == 'GET') {
       r = await _withAuth(request, (user) async {
         final tag = request.url.queryParameters['tag'];
         final match = tag == null || tag.isEmpty
-            ? _memos.where((m) => m['user_id'] == user)
+            ? _memos.where((m) =>
+                m['user_id'] == user && (m['deleted_at'] as String).isEmpty)
             : _memos.where((m) =>
                 m['user_id'] == user &&
+                (m['deleted_at'] as String).isEmpty &&
                 (m['tags'] as List<String>).contains(tag));
         return _json(200, {'memos': match.toList()});
       });
@@ -146,7 +169,8 @@ class FakeMeridianServer {
     } else if (path == '/api/v1/tags' && request.method == 'GET') {
       r = await _withAuth(request, (user) async {
         final names = <String>{
-          for (final m in _memos.where((m) => m['user_id'] == user))
+          for (final m in _memos.where((m) =>
+              m['user_id'] == user && (m['deleted_at'] as String).isEmpty))
             ...(m['tags'] as List<String>),
         }.toList()
           ..sort();
@@ -325,13 +349,17 @@ class FakeMeridianServer {
       'tags': tags ?? <String>[],
       'created_at': now,
       'updated_at': now,
+      'deleted_at': '',
     };
     _memos.add(memo);
     return _json(201, memo);
   }
 
   Future<http.Response> _updateMemo(http.Request request, String user, int? id) async {
-    final idx = _memos.indexWhere((m) => m['id'] == id && m['user_id'] == user);
+    final idx = _memos.indexWhere((m) =>
+        m['id'] == id &&
+        m['user_id'] == user &&
+        (m['deleted_at'] as String).isEmpty);
     if (idx == -1) return _json(404, {'error': 'not_found'});
     final body = _body(request);
     final title = (body['title'] as String? ?? '').trim();
@@ -352,11 +380,41 @@ class FakeMeridianServer {
     return _json(200, _memos[idx]);
   }
 
+  /// Same as the real server (T5): DELETE moves the memo into the recycle
+  /// bin — a soft delete — and one already in the bin looks missing.
   http.Response _deleteMemo(String user, int? id) {
-    final idx = _memos.indexWhere((m) => m['id'] == id && m['user_id'] == user);
+    final idx = _memos.indexWhere((m) =>
+        m['id'] == id &&
+        m['user_id'] == user &&
+        (m['deleted_at'] as String).isEmpty);
     if (idx == -1) return _json(404, {'error': 'not_found'});
-    _memos.removeAt(idx);
+    _memos[idx]['deleted_at'] = DateTime.now().toUtc().toIso8601String();
     return http.Response('', 204);
+  }
+
+  http.Response _restoreMemo(String user, int? id) {
+    final memo = _memoInTrash(user, id);
+    if (memo == null) return _json(404, {'error': 'not_found'});
+    memo['deleted_at'] = '';
+    return http.Response('', 204);
+  }
+
+  http.Response _purgeMemo(String user, int? id) {
+    final memo = _memoInTrash(user, id);
+    if (memo == null) return _json(404, {'error': 'not_found'});
+    _memos.remove(memo);
+    return http.Response('', 204);
+  }
+
+  Map<String, dynamic>? _memoInTrash(String user, int? id) {
+    for (final m in _memos) {
+      if (m['id'] == id &&
+          m['user_id'] == user &&
+          (m['deleted_at'] as String).isNotEmpty) {
+        return m;
+      }
+    }
+    return null;
   }
 
   Future<http.Response> _withAuth(

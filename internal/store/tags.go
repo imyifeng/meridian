@@ -66,13 +66,14 @@ func (s *Store) memoTags(memoID int64) ([]string, error) {
 	return names, rows.Err()
 }
 
-// TagNamesByUser lists the distinct tag names a user has used, sorted — the
-// data source for tag autocomplete (T4). Tags never cross users.
+// TagNamesByUser lists the distinct tag names a user has used on live
+// memos, sorted — the data source for tag autocomplete (T4). Trashed memos
+// drop out until restored (T5). Tags never cross users.
 func (s *Store) TagNamesByUser(userID int64) ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT t.name
 		FROM memo_tags t JOIN memos m ON m.id = t.memo_id
-		WHERE m.user_id = ?
+		WHERE m.user_id = ? AND m.deleted_at = ''
 		ORDER BY t.name`, userID)
 	if err != nil {
 		return nil, err
