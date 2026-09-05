@@ -48,9 +48,3 @@ flutter build windows --release
   是完整应用，别单独拷走 exe
 
 双击 `Meridian.exe` 运行，窗口标题为 Meridian。
-
-## 试用连接
-
-启动服务端（见 [deploy-compose.md](deploy-compose.md)）后，首次进入应用
-时填服务器地址（局域网内 `http://<主机IP>:8080`）登录。地址会记住，下次
-启动自动带出。

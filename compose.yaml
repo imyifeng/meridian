@@ -1,6 +1,6 @@
 # Meridian 试用部署 (T11)：`podman compose up -d --build` 从源码构建镜像并
 # 启动实例；备忘录数据放在命名卷 meridian-data 里，容器重建后数据不丢。
-# 服务只监听高位端口 8080，HTTPS 交给前置反代（ADR/spec：部署与分发）。
+# 服务只监听高位端口 8080，HTTPS 交给前置反代（spec #1「部署与分发」）。
 services:
   meridian:
     build: .

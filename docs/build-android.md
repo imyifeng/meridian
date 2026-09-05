@@ -5,9 +5,9 @@
 
 ## 前置工具链
 
-1. **Flutter SDK**：本仓库用 Flutter 3.x 稳定版（见 `client/pubspec.yaml`
-   的 `environment.sdk`）。装到任意路径，例如 `~/development/flutter`，
-   并把 `bin` 加进 `PATH`。
+1. **Flutter SDK**：本仓库用 Flutter 3.x 稳定版（依赖要求 Dart SDK
+   ^3.13.2，见 `client/pubspec.yaml`）。装到任意路径，例如
+   `~/development/flutter`，并把 `bin` 加进 `PATH`。
 2. **JDK**：17 及以上（Android Gradle Plugin 需要）。本机验证于 OpenJDK
    21（`sudo dnf install java-21-openjdk` 或任意等价安装）。
 

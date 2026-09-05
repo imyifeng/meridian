@@ -20,8 +20,8 @@ podman compose up -d --build
 
 这一条命令会从源码完成全部构建并启动：
 
-1. 在容器里用与 `client/pubspec.lock` 匹配的 Flutter 3.47.2 稳定版构建
-   Web 管理控制台与 Web 简易客户端两个 SPA；
+1. 在容器里用仓库开发所用的 Flutter 3.47.2 稳定版构建 Web 管理控制台
+   与 Web 简易客户端两个 SPA；
 2. 编译静态 Go 二进制，并把两个 SPA 内嵌进去；
 3. 打出运行镜像 `localhost/meridian:trial` 并启动容器。
 
