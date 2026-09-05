@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "imyifeng" "\0"
-            VALUE "FileDescription", "meridian" "\0"
+            VALUE "FileDescription", "Meridian" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "meridian" "\0"
+            VALUE "InternalName", "Meridian" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 imyifeng. All rights reserved." "\0"
-            VALUE "OriginalFilename", "meridian.exe" "\0"
-            VALUE "ProductName", "meridian" "\0"
+            VALUE "OriginalFilename", "Meridian.exe" "\0"
+            VALUE "ProductName", "Meridian" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
