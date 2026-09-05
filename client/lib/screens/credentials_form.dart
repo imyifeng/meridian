@@ -77,6 +77,7 @@ class _CredentialsFormState extends State<CredentialsForm> {
               if (widget.showServerAddress) ...[
                 TextField(
                   controller: widget.serverAddress,
+                  key: const Key('server_address_field'),
                   decoration: const InputDecoration(
                     labelText: '服务器地址',
                     hintText: 'http://192.168.1.10:8080',

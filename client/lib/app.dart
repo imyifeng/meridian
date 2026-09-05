@@ -7,6 +7,7 @@ import 'reminders.dart';
 import 'screens/login_screen.dart';
 import 'screens/memos_screen.dart';
 import 'screens/setup_screen.dart';
+import 'server_address_store.dart';
 import 'token_store.dart';
 
 enum AppState { loading, setup, login, memos, error }
@@ -23,6 +24,12 @@ class MeridianApp extends StatefulWidget {
   /// Offline snapshot store (T8); production persists via
   /// shared_preferences, tests leave it null for the in-memory cache.
   final MemoCache? memoCache;
+
+  /// Where the last-used server address persists between launches (T11);
+  /// production persists via platform secure storage, tests leave it null
+  /// for the in-memory store. When it holds an address, it beats the
+  /// compile-time [baseUrl] on the next launch.
+  final ServerAddressStore? addressStore;
 
   /// Transport override for UI seam tests; production uses the default
   /// socket-based client.
@@ -47,6 +54,7 @@ class MeridianApp extends StatefulWidget {
     required this.baseUrl,
     required this.tokenStore,
     this.memoCache,
+    this.addressStore,
     this.apiClient,
     this.reminderNotifications,
     this.reminderNow,
@@ -60,6 +68,7 @@ class MeridianApp extends StatefulWidget {
 class _MeridianAppState extends State<MeridianApp> {
   late final TextEditingController _serverAddress;
   late final MemoCache _memoCache;
+  late final ServerAddressStore _addressStore;
   AppState _state = AppState.loading;
   String? _token;
   // True once the app entered the memos on a cached snapshot because the
@@ -72,6 +81,7 @@ class _MeridianAppState extends State<MeridianApp> {
     super.initState();
     _serverAddress = TextEditingController(text: widget.baseUrl);
     _memoCache = widget.memoCache ?? InMemoryMemoCache();
+    _addressStore = widget.addressStore ?? InMemoryServerAddressStore();
     _bootstrap();
   }
 
@@ -86,6 +96,12 @@ class _MeridianAppState extends State<MeridianApp> {
 
   Future<void> _bootstrap() async {
     setState(() => _state = AppState.loading);
+    // The address the user last logged in with beats the compile-time
+    // default (T11).
+    final stored = (await _addressStore.read())?.trim();
+    if (stored != null && stored.isNotEmpty) {
+      _serverAddress.text = stored;
+    }
     String? token = await widget.tokenStore.read();
     try {
       final initialized = await _api().isInitialized();
@@ -142,6 +158,8 @@ class _MeridianAppState extends State<MeridianApp> {
   }
 
   Future<void> _authenticated(Session session) async {
+    // The address just proven to work is the one to bring back next launch.
+    await _addressStore.write(_serverAddress.text.trim());
     await widget.tokenStore.write(session.token);
     setState(() {
       _token = session.token;

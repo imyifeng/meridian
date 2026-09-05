@@ -1,0 +1,8 @@
+# Keep the build context lean and the image build hermetic: the Dockerfile
+# builds the web assets itself, so the host's gitignored dist outputs and
+# build leftovers must not leak into it.
+.git
+build/
+client/build/
+internal/webconsole/dist/*
+internal/webclient/dist/*
