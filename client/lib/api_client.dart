@@ -170,12 +170,13 @@ class MeridianApi {
   }
 
   /// categoryId omitted → the memo keeps its current category; tags omitted
-  /// → it keeps its current tags. remindAt is always sent — the editor owns
-  /// the memo's whole state — so null clears the reminder and a time sets
-  /// it. keepReminder (the Web 简易客户端's save path) sends no remind_at
-  /// at all instead: the server keeps the standing one, so a save never
-  /// overwrites a reminder another end set or moved after this editor
-  /// loaded — a state its hidden reminder UI cannot reflect.
+  /// → it keeps its current tags. By default remindAt is always sent — the
+  /// editor owns the memo's whole state — so null clears the reminder and a
+  /// time sets it. keepReminder (the Web 简易客户端's save path) sends no
+  /// remind_at at all and ignores remindAt: the server keeps the standing
+  /// one, so the save cannot overwrite a reminder another end set or moved
+  /// after this editor loaded — a state its hidden reminder UI cannot
+  /// reflect.
   Future<Memo> updateMemo(String token,
       {required int id, required String title, String body = '',
       int? categoryId, List<String>? tags, DateTime? remindAt,

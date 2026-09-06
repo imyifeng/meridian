@@ -129,12 +129,10 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
             title: title, body: body, categoryId: _categoryId, tags: _tags,
             remindAt: _remindAt);
       } else {
-        // Where the reminder UI is hidden the save omits the field: the
-        // server keeps the standing reminder instead of this editor's
-        // possibly stale load overwriting a concurrent change.
         await widget.api.updateMemo(widget.token,
             id: widget.memo!.id, title: title, body: body,
-            categoryId: _categoryId, tags: _tags, remindAt: _remindAt,
+            categoryId: _categoryId, tags: _tags,
+            remindAt: widget.showReminder ? _remindAt : null,
             keepReminder: !widget.showReminder);
       }
       if (mounted) Navigator.of(context).pop();
