@@ -4,7 +4,7 @@ import '../api_client.dart';
 import 'categories_screen.dart';
 import 'users_screen.dart';
 
-/// The Web 管理控制台 shell: sign in with an instance account, then manage
+/// The Web 管理控制台 shell: sign in with instance credentials, then manage
 /// the category taxonomy and the instance's users. The server hosts this
 /// build at /console/, so every API path is same-origin and no server-address
 /// field is needed — unlike the Windows/Android client, the browser session

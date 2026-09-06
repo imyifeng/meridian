@@ -9,8 +9,9 @@ import (
 )
 
 // TestMemoTrashLifecycle walks one memo through all three trash states
-// (T5): deleted — in the bin, invisible to every normal surface; restored —
-// back in its original category with its tags; purged — gone for good.
+// (T5): deleted — in the recycle bin, invisible to every normal surface;
+// restored — back in its original category with its tags; purged — gone
+// for good.
 func TestMemoTrashLifecycle(t *testing.T) {
 	env := apitest.NewEnv(t)
 	administrator := env.Administrator()
@@ -133,7 +134,8 @@ func TestMemoTrashLifecycle(t *testing.T) {
 	}
 }
 
-// 回收站永不自动清空: a memo still sits in the bin after a process restart.
+// 回收站永不自动清空: a memo still sits in the recycle bin after a
+// process restart.
 func TestTrashSurvivesRestart(t *testing.T) {
 	env := apitest.NewEnv(t)
 	administrator := env.Administrator()
@@ -191,8 +193,8 @@ func TestTrashIsScopedToItsOwner(t *testing.T) {
 }
 
 // 恢复回"原分类"以原分类仍然存在为前提：a category deleted while its memo
-// sits in the bin takes the memo to 未分类 with it (ADR-0002 fallback), so
-// restoring never lands the memo on a dangling category.
+// sits in the recycle bin takes the memo to 未分类 with it (ADR-0002
+// fallback), so restoring never lands the memo on a dangling category.
 func TestCategoryDeletedUnderTrashedMemoFallsBackToUncategorized(t *testing.T) {
 	env := apitest.NewEnv(t)
 	administrator := env.Administrator()

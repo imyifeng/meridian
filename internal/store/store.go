@@ -137,8 +137,8 @@ var migrations = []string{
 	);`,
 	// T5: the recycle bin. deleted_at is '' for a live memo and the deletion
 	// timestamp once trashed; restoring clears it, purging removes the row.
-	// The bin is never emptied automatically — an aging-out policy belongs
-	// to a later ticket.
+	// The recycle bin is never emptied automatically — an aging-out policy
+	// belongs to a later ticket.
 	`ALTER TABLE memos ADD COLUMN deleted_at TEXT NOT NULL DEFAULT '';`,
 	// T6: the full-text index over title, body, and tags (one column each, so
 	// a phrase can never span two sources). rowid is the memo id; the write

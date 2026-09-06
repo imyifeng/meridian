@@ -4,8 +4,8 @@ import '../api_client.dart';
 
 /// The recycle bin (T5): every trashed memo of the signed-in user, most
 /// recently deleted first. Restore puts a memo back into its original
-/// category; purging asks once and is then final. The bin never empties
-/// itself.
+/// category; purging asks once and is then final. The recycle bin never
+/// empties itself.
 class TrashScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;

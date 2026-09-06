@@ -155,7 +155,7 @@ void main() {
     // The confirmation names the number of memos the cascade will take.
     expect(find.textContaining('该用户有 1 条备忘录'), findsOneWidget);
 
-    // Cancelling keeps the account.
+    // Cancelling keeps the user.
     await tester.tap(find.byKey(const Key('cancel_delete_button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('user_bob')), findsOneWidget);
@@ -166,7 +166,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('user_bob')), findsNothing);
-    // The account is gone: its credentials no longer log in.
+    // The user is gone: their credentials no longer log in.
     final api = MeridianApi(baseUrl: fake.url, client: fake.client);
     await expectLater(
       api.login('bob', 'bob password'),

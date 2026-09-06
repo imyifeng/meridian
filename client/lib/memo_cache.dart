@@ -7,7 +7,7 @@ import 'api_client.dart';
 /// What the client keeps between runs for offline reading (ADR-0003): the
 /// last full memo list the server sent for this credential, plus the
 /// taxonomy names the list rows display. Keyed by the token it belongs to,
-/// so a snapshot from another account is never shown.
+/// so a snapshot from another user is never shown.
 class CachedSnapshot {
   final String token;
   final List<Memo> memos;
