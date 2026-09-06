@@ -83,22 +83,25 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) listMemos(w http.ResponseWriter, r *http.Request) {
-	tag := r.URL.Query().Get("tag")
-	// q non-empty turns the list into a full-text search (T6); the tag
-	// filter, when also given, narrows the hits.
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	var (
-		memos []store.Memo
-		err   error
-	)
-	switch {
-	case q != "":
-		memos, err = s.st.SearchMemos(identity(r).ID, q, tag)
-	case tag != "":
-		memos, err = s.st.MemosByUserAndTag(identity(r).ID, tag)
-	default:
-		memos, err = s.st.MemosByUser(identity(r).ID)
+	f := store.MemoFilter{
+		// q non-empty turns the list into a full-text search (T6); tag and
+		// category, when also given, narrow the hits.
+		Query: strings.TrimSpace(r.URL.Query().Get("q")),
+		Tag:   r.URL.Query().Get("tag"),
 	}
+	// category_id narrows the list to one taxonomy category (T14); the
+	// built-in 未分类 is a normal choice here. A malformed or non-positive
+	// id is a client bug and a 400; a well-formed unknown id is simply a
+	// miss, like a tag no memo carries.
+	if raw := r.URL.Query().Get("category_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		f.CategoryID = id
+	}
+	memos, err := s.st.Memos(identity(r).ID, f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return

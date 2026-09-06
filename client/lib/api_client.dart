@@ -138,12 +138,15 @@ class MeridianApi {
   }
 
   /// tag non-null lists only the memos carrying that tag — a body without
-  /// the word still matches (T4). query non-null full-text searches title,
-  /// body, and tags (T6); given together, the tag narrows the search.
-  Future<List<Memo>> memos(String token, {String? tag, String? query}) async {
+  /// the word still matches (T4). categoryId non-null lists only the memos
+  /// in that taxonomy category (T14). query non-null full-text searches
+  /// title, body, and tags (T6); given together, each narrows the others.
+  Future<List<Memo>> memos(String token,
+      {String? tag, String? query, int? categoryId}) async {
     final params = <String>[
       if (tag != null) 'tag=${Uri.encodeQueryComponent(tag)}',
       if (query != null) 'q=${Uri.encodeQueryComponent(query)}',
+      if (categoryId != null) 'category_id=$categoryId',
     ];
     final suffix = params.isEmpty ? '' : '?${params.join('&')}';
     final body = await _request('GET', '/api/v1/memos$suffix', token: token);

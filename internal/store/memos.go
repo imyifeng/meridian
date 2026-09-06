@@ -174,34 +174,41 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	return m, nil
 }
 
-// MemosByUser lists a user's live memos, newest first; trashed ones stay in
-// the recycle bin (T5).
-func (s *Store) MemosByUser(userID int64) ([]Memo, error) {
-	rows, err := s.db.Query(
-		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND deleted_at = '' ORDER BY created_at DESC, id DESC",
-		userID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	memos, err := scanMemos(rows)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.attachTags(userID, memos); err != nil {
-		return nil, err
-	}
-	return memos, nil
+// MemoFilter narrows a memo listing; every set field narrows further. A
+// non-empty Query full-text searches (T6), a non-empty Tag keeps only
+// memos carrying it (T4), and CategoryID > 0 keeps only memos in that
+// taxonomy category (T14).
+type MemoFilter struct {
+	Query      string
+	Tag        string
+	CategoryID int64
 }
 
-// MemosByUserAndTag lists a user's memos carrying tag, newest first; a tag
-// no memo carries is simply a miss. The match is on the tag alone — the body
-// never has to mention the word (T4).
-func (s *Store) MemosByUserAndTag(userID int64, tag string) ([]Memo, error) {
-	rows, err := s.db.Query(
-		"SELECT "+memoColumns+" FROM memos WHERE user_id = ? AND deleted_at = '' AND id IN (SELECT memo_id FROM memo_tags WHERE name = ?) ORDER BY created_at DESC, id DESC",
-		userID, tag,
-	)
+// Memos lists a user's live memos, newest first, narrowed by f; a tag
+// matches on the tag alone and a category on the assignment alone — the
+// memo's text never has to mention either (T4). A tag or category no memo
+// has is simply a miss. Trashed memos stay in the recycle bin (T5).
+func (s *Store) Memos(userID int64, f MemoFilter) ([]Memo, error) {
+	sq := "SELECT " + memoColumns + " FROM memos WHERE user_id = ? AND deleted_at = ''"
+	args := []any{userID}
+	if f.Query != "" {
+		expr := ftsMatchExpr(f.Query)
+		if expr == "" {
+			return []Memo{}, nil
+		}
+		sq += " AND id IN (SELECT rowid FROM memos_fts WHERE memos_fts MATCH ?)"
+		args = append(args, expr)
+	}
+	if f.Tag != "" {
+		sq += " AND id IN (SELECT memo_id FROM memo_tags WHERE name = ?)"
+		args = append(args, f.Tag)
+	}
+	if f.CategoryID > 0 {
+		sq += " AND category_id = ?"
+		args = append(args, f.CategoryID)
+	}
+	sq += " ORDER BY created_at DESC, id DESC"
+	rows, err := s.db.Query(sq, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -90,6 +90,7 @@ func isCJK(r rune) bool {
 // ftsMatchExpr turns the user's query into an FTS5 expression: one
 // column-fanned-out phrase per whitespace-separated term, ANDed together.
 // Empty input yields an empty expression — the caller then skips the query.
+// The one read that uses it is Store.Memos, the single listing path.
 func ftsMatchExpr(query string) string {
 	var blocks []string
 	for _, term := range strings.Fields(query) {
@@ -97,38 +98,6 @@ func ftsMatchExpr(query string) string {
 		blocks = append(blocks, `(title:"`+phrase+`" OR body:"`+phrase+`" OR tags:"`+phrase+`")`)
 	}
 	return strings.Join(blocks, " AND ")
-}
-
-// SearchMemos runs a full-text query over a user's live memos (T6), matching
-// title, body, and tags — a tag hit counts even when the body never mentions
-// the word, same rule as tag filtering (T4). tag additionally narrows the
-// hits to memos carrying it. Newest first, like every memo listing.
-func (s *Store) SearchMemos(userID int64, query, tag string) ([]Memo, error) {
-	expr := ftsMatchExpr(query)
-	if expr == "" {
-		return []Memo{}, nil
-	}
-	sq := `SELECT ` + memoColumns + ` FROM memos
-		WHERE user_id = ? AND deleted_at = ''
-		AND id IN (SELECT rowid FROM memos_fts WHERE memos_fts MATCH ?)`
-	args := []any{userID, expr}
-	if tag != "" {
-		sq += ` AND id IN (SELECT memo_id FROM memo_tags WHERE name = ?)`
-		args = append(args, tag)
-	}
-	sq += ` ORDER BY created_at DESC, id DESC`
-	rows, err := s.db.Query(sq, args...)
-	if err != nil {
-		return nil, err
-	}
-	memos, err := scanMemos(rows)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.attachTags(userID, memos); err != nil {
-		return nil, err
-	}
-	return memos, nil
 }
 
 // repairSearchIndex rebuilds the search index from the memo table when its
