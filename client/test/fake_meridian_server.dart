@@ -187,7 +187,9 @@ class FakeMeridianServer {
         final tag = request.url.queryParameters['tag'];
         // Same shape as the real server (T6): q searches title, body, and
         // tags of the user's live memos, every whitespace-separated term
-        // ANDed; a tag on top narrows the hits.
+        // ANDed; a tag on top narrows the hits, and so does category_id
+        // (T14) — malformed or non-positive ids are a 400, well-formed
+        // unknown ones a miss.
         final q = (request.url.queryParameters['q'] ?? '').trim();
         final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
         var match = _memos.where((m) =>
@@ -202,6 +204,14 @@ class FakeMeridianServer {
         if (tag != null && tag.isNotEmpty) {
           match = match.where(
               (m) => (m['tags'] as List<String>).contains(tag));
+        }
+        final categoryId = request.url.queryParameters['category_id'];
+        if (categoryId != null) {
+          final id = int.tryParse(categoryId);
+          if (id == null || id <= 0) {
+            return _json(400, {'error': 'invalid_request'});
+          }
+          match = match.where((m) => m['category_id'] == id);
         }
         return _json(200, {'memos': match.toList()});
       });

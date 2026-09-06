@@ -66,14 +66,14 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer reopened.Close()
-	live, err := reopened.SearchMemos(u.ID, "英语", "")
+	live, err := reopened.Memos(u.ID, store.MemoFilter{Query: "英语"})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	if len(live) != 1 || live[0].Title != "升级前的旧笔记" {
 		t.Errorf("search after upgrade = %+v, want [升级前的旧笔记]", live)
 	}
-	trashed, err := reopened.SearchMemos(u.ID, "笔记", "")
+	trashed, err := reopened.Memos(u.ID, store.MemoFilter{Query: "笔记"})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}

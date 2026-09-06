@@ -57,6 +57,9 @@ class MemosScreen extends StatefulWidget {
 class _MemosScreenState extends State<MemosScreen> {
   late Future<MemoListData> _future;
   String? _filterTag;
+  // 分类筛选 (T14)：picked from the taxonomy sheet; categories are
+  // read-only here (ADR-0002) — this only chooses among them.
+  Category? _filterCategory;
   // 全文搜索 (T6)：_searching toggles the app-bar search field,
   // _searchQuery holds the committed query (null = not searching).
   bool _searching = false;
@@ -115,8 +118,13 @@ class _MemosScreenState extends State<MemosScreen> {
   /// without disturbing whatever the screen is showing. Full lists only and
   /// online only — offline, the reconnect loop's successful _load syncs;
   /// filtered, the page is not the whole truth.
+  /// True while any filter stands: the page then shows a subset, not the
+  /// whole truth — no snapshot writes, no scheduler syncs, no quiet polls.
+  bool get _isFiltered =>
+      _filterTag != null || _filterCategory != null || _searchQuery != null;
+
   Future<void> _pollReminders() async {
-    if (_offline || _filterTag != null || _searchQuery != null) return;
+    if (_offline || _isFiltered) return;
     try {
       final memos = await widget.api.memos(widget.token);
       await _reminders?.sync(memos);
@@ -150,18 +158,20 @@ class _MemosScreenState extends State<MemosScreen> {
 
   Future<MemoListData> _load() async {
     // tag non-null asks the server for only the memos carrying it — a memo
-    // whose body never mentions the word still matches (T4). query non-null
-    // full-text searches title, body, and tags (T6); both narrow together.
+    // whose body never mentions the word still matches (T4). categoryId
+    // non-null narrows to one taxonomy category (T14). query non-null
+    // full-text searches title, body, and tags (T6); all three narrow
+    // together.
     try {
-      final memos = await widget.api
-          .memos(widget.token, tag: _filterTag, query: _searchQuery);
+      final memos = await widget.api.memos(widget.token,
+          tag: _filterTag, query: _searchQuery, categoryId: _filterCategory?.id);
       final categories = await widget.api.categories(widget.token);
       // Keep the offline snapshot current (T8) — full lists only: a search
       // or filter result must never masquerade offline as "all my memos".
       // The reconnect retry lands here too, so recovery also refreshes the
       // cache. Same rule for the scheduler (T9): a filtered page must not
       // disarm reminders it does not show.
-      if (_filterTag == null && _searchQuery == null) {
+      if (!_isFiltered) {
         await widget.cache.write(CachedSnapshot(
             token: widget.token, memos: memos, categories: categories));
         await _reminders?.sync(memos);
@@ -262,6 +272,54 @@ class _MemosScreenState extends State<MemosScreen> {
     });
   }
 
+  /// Offers the instance taxonomy (ADR-0002); picking one filters the list.
+  /// 只读的选择，不提供任何增减分类的途径 (ADR-0002)。
+  Future<void> _pickCategoryFilter() async {
+    List<Category> categories;
+    try {
+      categories = await widget.api.categories(widget.token);
+    } on ApiException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('加载分类失败')));
+      }
+      return;
+    }
+    if (!mounted) return;
+    final picked = await showModalBottomSheet<Category>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final c in categories)
+                ListTile(
+                  key: Key('filter_category_${c.name}'),
+                  leading: const Icon(Icons.category_outlined),
+                  title: Text(c.name),
+                  onTap: () => Navigator.of(context).pop(c),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      _filterCategory = picked;
+      _future = _load()..ignore();
+    });
+  }
+
+  void _clearCategoryFilter() {
+    setState(() {
+      _filterCategory = null;
+      _future = _load()..ignore();
+    });
+  }
+
   void _openSearch() {
     setState(() {
       _searching = true;
@@ -323,6 +381,24 @@ class _MemosScreenState extends State<MemosScreen> {
     _reload();
   }
 
+  /// The app-bar title: the filters in force, or the app name.
+  String get _listTitle {
+    final parts = <String>[
+      if (_filterCategory != null) '分类：${_filterCategory!.name}',
+      if (_filterTag != null) '标签：$_filterTag',
+    ];
+    return parts.isEmpty ? 'Meridian' : parts.join(' · ');
+  }
+
+  /// What an empty list says, naming the filter in force.
+  String get _emptyMessage {
+    if (_searchQuery != null) return '未找到匹配的备忘录';
+    if (_filterCategory != null && _filterTag != null) return '该筛选下暂无备忘录';
+    if (_filterCategory != null) return '该分类下暂无备忘录';
+    if (_filterTag != null) return '该标签下暂无备忘录';
+    return '暂无备忘录';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -339,7 +415,7 @@ class _MemosScreenState extends State<MemosScreen> {
                 ),
                 onSubmitted: _runSearch,
               )
-            : Text(_filterTag == null ? 'Meridian' : '标签：$_filterTag'),
+            : Text(_listTitle),
         actions: [
           if (_searching)
             IconButton(
@@ -363,11 +439,24 @@ class _MemosScreenState extends State<MemosScreen> {
               tooltip: '清除筛选',
               onPressed: _clearFilter,
             ),
+          if (_filterCategory != null)
+            IconButton(
+              key: const Key('clear_category_filter_button'),
+              icon: const Icon(Icons.close),
+              tooltip: '清除分类筛选',
+              onPressed: _clearCategoryFilter,
+            ),
           IconButton(
             key: const Key('filter_button'),
             icon: const Icon(Icons.filter_list),
             tooltip: '按标签筛选',
             onPressed: _offline ? null : _pickFilter,
+          ),
+          IconButton(
+            key: const Key('category_filter_button'),
+            icon: const Icon(Icons.category_outlined),
+            tooltip: '按分类筛选',
+            onPressed: _offline ? null : _pickCategoryFilter,
           ),
           IconButton(
             key: const Key('trash_button'),
@@ -457,11 +546,7 @@ class _MemosScreenState extends State<MemosScreen> {
     final memos = data.memos;
     final categoryNames = data.categoryNames;
     if (memos.isEmpty) {
-      final message = _searchQuery != null
-          ? '未找到匹配的备忘录'
-          : _filterTag == null
-              ? '暂无备忘录'
-              : '该标签下暂无备忘录';
+      final message = _emptyMessage;
       return Center(child: Text(message));
     }
     return ListView.builder(
