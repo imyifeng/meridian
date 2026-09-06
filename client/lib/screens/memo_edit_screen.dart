@@ -16,8 +16,10 @@ class MemoEditScreen extends StatefulWidget {
   final Memo? memo; // null → create mode
 
   /// False in the Web 简易客户端 (T10): the reminder row is not offered.
-  /// A memo's standing reminder still rides along untouched — [updateMemo]
-  /// always sends the field, so hiding the UI must not clear the data.
+  /// What the editor does not show it must not write: the save then omits
+  /// the reminder field entirely, so a reminder another end set or moved
+  /// after this editor loaded survives instead of being overwritten by the
+  /// stale value riding along.
   final bool showReminder;
 
   const MemoEditScreen({
@@ -129,7 +131,9 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       } else {
         await widget.api.updateMemo(widget.token,
             id: widget.memo!.id, title: title, body: body,
-            categoryId: _categoryId, tags: _tags, remindAt: _remindAt);
+            categoryId: _categoryId, tags: _tags,
+            remindAt: widget.showReminder ? _remindAt : null,
+            keepReminder: !widget.showReminder);
       }
       if (mounted) Navigator.of(context).pop();
     } on ApiException catch (e) {
