@@ -20,7 +20,7 @@ One ticket per session: claim → branch → implement → review & merge → cl
 
 - **Claim**: `gh issue edit <n> --add-assignee @me` (ticket conventions in `docs/agents/issue-tracker.md`)
 - **Branch**: cut `t<N>-<slug>` from latest main (e.g. `t2-minimal-loop`). main is merged only via PR
-- **Implement**: `/implement` drives the `/tdd` red-green loop. Server integration tests boot the real binary against a temp SQLite file — no containers. Test seams: spec (#1)
+- **Implement**: `/implement` drives the `/tdd` red-green loop. Server integration tests boot the real API handler in-process against a temp SQLite file — no containers; the compiled binary itself (command-line flags, signal shutdown) is not under test. Test seams: spec (#1)
 - **Review & merge**: after `/code-review` passes (Standards axis against this file, Spec axis against the ticket and spec #1), open a PR, `gh pr merge --squash`, and delete the branch
 - **Close**: post a wrap-up comment on the ticket, then close it
 

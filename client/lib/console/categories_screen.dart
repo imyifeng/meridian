@@ -14,7 +14,7 @@ class CategoriesScreen extends StatefulWidget {
   final MeridianApi api;
   final String token;
 
-  /// False for non-administrator accounts: read-only view.
+  /// False for non-administrator users: read-only view.
   final bool canManage;
 
   const CategoriesScreen({

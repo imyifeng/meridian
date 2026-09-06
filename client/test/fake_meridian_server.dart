@@ -449,7 +449,7 @@ class FakeMeridianServer {
   }
 
   /// Same as the real server (T5): DELETE moves the memo into the recycle
-  /// bin — a soft delete — and one already in the bin looks missing.
+  /// bin — a soft delete — and one already there looks missing.
   http.Response _deleteMemo(String user, int? id) {
     final idx = _memos.indexWhere((m) =>
         m['id'] == id &&

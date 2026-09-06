@@ -122,13 +122,13 @@ func (e *Env) SetupAdministrator(username, password string) *Credentials {
 	}
 	resp := e.Call("POST", "/api/v1/setup/administrator", "", map[string]string{"username": username, "password": password}, &out)
 	if resp.StatusCode != http.StatusCreated {
-		e.t.Fatalf("setup admin: status %d, want 201", resp.StatusCode)
+		e.t.Fatalf("setup administrator: status %d, want 201", resp.StatusCode)
 	}
 	e.administrator = &Credentials{Username: username, Password: password, Token: out.Token, ID: out.User.ID}
 	return e.administrator
 }
 
-// Admin returns the instance's administrator, creating it on first use.
+// Administrator returns the instance's administrator, creating it on first use.
 func (e *Env) Administrator() *Credentials {
 	e.t.Helper()
 	if e.administrator == nil {

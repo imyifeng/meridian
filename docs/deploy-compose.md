@@ -50,9 +50,11 @@ curl http://127.0.0.1:8080/api/v1/instance
 # {"initialized":false}   ← 未初始化
 ```
 
-浏览器打开 `http://<主机IP>:8080/console/` 走初始化向导创建首个管理员；
-之后 `initialized` 变为 `true`，普通用户在 `http://<主机IP>:8080/web/`
-登录 Web 简易客户端，Windows/Android 客户端填 `http://<主机IP>:8080`。
+浏览器打开 `http://<主机IP>:8080/web/` 走初始化向导创建首个管理员
+（向导只在主应用里；`/console/` 的 Web 管理控制台只有登录）。之后
+`initialized` 变为 `true`，普通用户在同一入口登录 Web 简易客户端，
+管理员在 `http://<主机IP>:8080/console/` 登录 Web 管理控制台，
+Windows/Android 客户端填 `http://<主机IP>:8080`。
 
 ## 停止与清理
 

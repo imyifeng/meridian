@@ -191,7 +191,7 @@ class MeridianApi {
   }
 
   /// The recycle bin (T5): the user's own trashed memos, most recently
-  /// deleted first. The bin never empties itself.
+  /// deleted first. The recycle bin never empties itself.
   Future<List<Memo>> trash(String token) async {
     final body = await _request('GET', '/api/v1/trash', token: token);
     return [

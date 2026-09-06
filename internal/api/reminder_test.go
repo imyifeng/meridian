@@ -108,7 +108,7 @@ func TestReminderValidation(t *testing.T) {
 
 func TestReminderSyncsAcrossSessions(t *testing.T) {
 	env := apitest.NewEnv(t)
-	env.Administrator() // seeds the admin the two sessions log in as
+	env.Administrator() // seeds the administrator the two sessions log in as
 
 	// A second session of the same user — another device, in domain terms.
 	var firstLogin, secondLogin struct {

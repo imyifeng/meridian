@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Category is one member of the instance-wide taxonomy (ADR-0002). Only an
-// administrator may add or remove members; 未分类 is built-in and permanent.
+// Category is one element of the instance-wide taxonomy (ADR-0002). Only an
+// administrator may add or remove categories; 未分类 is built-in and permanent.
 type Category struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
@@ -74,7 +74,7 @@ func (s *Store) categoryExists(id int64) (bool, error) {
 	return err == nil, err
 }
 
-// CreateCategory adds a member to the taxonomy. Names are unique, so the
+// CreateCategory adds a category to the taxonomy. Names are unique, so the
 // built-in 未分类 can never be shadowed by a second category of that name.
 func (s *Store) CreateCategory(name string) (*Category, error) {
 	name = strings.TrimSpace(name)

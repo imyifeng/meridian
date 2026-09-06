@@ -151,7 +151,7 @@ class _MeridianAppState extends State<MeridianApp> {
   }
 
   /// The cached snapshot, but only if it belongs to [token] — another
-  /// account's memos must never be shown.
+  /// user's memos must never be shown.
   Future<CachedSnapshot?> _snapshotForToken(String token) async {
     final snapshot = await _memoCache.read();
     return snapshot?.token == token ? snapshot : null;
