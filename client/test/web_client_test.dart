@@ -127,6 +127,49 @@ void main() {
     expect(fake.remindAtOf('改名后'), when);
   });
 
+  testWidgets('他端在加载后设置的提醒，Web 保存正文后不被清除', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '并发备忘', body: '正文');
+
+    await bootWebClient(tester, fake);
+    await loginAs(tester, 'yifeng', 'correct horse');
+    await openMemo(tester, '并发备忘');
+
+    // While this editor is open, another end sets a reminder — the Web
+    // 简易客户端 shows none, so its loaded copy still knows nothing.
+    final concurrent = DateTime(2027, 6, 1, 8, 0);
+    fake.setMemoReminder('yifeng', '并发备忘', concurrent);
+
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    // The save carries no reminder of its own: the one the other end set
+    // must still stand.
+    expect(fake.remindAtOf('并发备忘'), concurrent);
+  });
+
+  testWidgets('他端在加载后修改的提醒，Web 保存正文后不回退为旧值', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '并发备忘', body: '正文',
+        remindAt: DateTime(2027, 3, 1, 9, 30));
+
+    await bootWebClient(tester, fake);
+    await loginAs(tester, 'yifeng', 'correct horse');
+    await openMemo(tester, '并发备忘');
+
+    // Another end moves the reminder while this editor holds the old time.
+    final moved = DateTime(2027, 6, 1, 8, 0);
+    fake.setMemoReminder('yifeng', '并发备忘', moved);
+
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    // The stale loaded time must not ride along with the save.
+    expect(fake.remindAtOf('并发备忘'), moved);
+  });
+
   testWidgets('Web 端同源托管：登录页没有服务器地址栏，登录直达列表', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');

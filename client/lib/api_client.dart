@@ -172,16 +172,20 @@ class MeridianApi {
   /// categoryId omitted → the memo keeps its current category; tags omitted
   /// → it keeps its current tags. remindAt is always sent — the editor owns
   /// the memo's whole state — so null clears the reminder and a time sets
-  /// it; the server also accepts an absent key as "keep" for other callers.
+  /// it. keepReminder (the Web 简易客户端's save path) sends no remind_at
+  /// at all instead: the server keeps the standing one, so a save never
+  /// overwrites a reminder another end set or moved after this editor
+  /// loaded — a state its hidden reminder UI cannot reflect.
   Future<Memo> updateMemo(String token,
       {required int id, required String title, String body = '',
-      int? categoryId, List<String>? tags, DateTime? remindAt}) async {
+      int? categoryId, List<String>? tags, DateTime? remindAt,
+      bool keepReminder = false}) async {
     final data = await _request('PUT', '/api/v1/memos/$id', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
       'tags': ?tags,
-      'remind_at': remindAt?.toUtc().toIso8601String() ?? '',
+      if (!keepReminder) 'remind_at': remindAt?.toUtc().toIso8601String() ?? '',
     });
     return Memo.fromJson(data);
   }
