@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 
+/// The sign-in wording shared by the client's LoginScreen and the Web
+/// Console sign-in, so the same failure reads identically on both ends.
+String loginErrorMessage(ApiException error) {
+  if (error.isUnauthorized) return '用户名或密码错误';
+  if (error.isUnreachable) return '无法连接服务器，请检查服务器地址';
+  return '登录失败，请重试';
+}
+
 /// Shared form for the setup wizard and login: server address, username,
 /// password. Screens own validation and error messaging; the app owns
 /// navigation.
