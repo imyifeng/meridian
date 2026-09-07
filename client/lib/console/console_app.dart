@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../session.dart';
 import 'categories_screen.dart';
 import 'users_screen.dart';
 
@@ -120,6 +121,9 @@ class _ConsoleAppState extends State<ConsoleApp> {
 
   Widget _consoleScaffold() {
     final session = _session!;
+    // One session value carries the endpoint-plus-credential to every
+    // console screen; the wire session stays only for the role check.
+    final meridian = MeridianSession(api: _api, token: session.token);
     final signOut = IconButton(
       icon: const Icon(Icons.logout),
       tooltip: '退出登录',
@@ -130,7 +134,7 @@ class _ConsoleAppState extends State<ConsoleApp> {
     if (!session.user.isAdministrator) {
       return Scaffold(
         appBar: AppBar(title: const Text('Meridian 管理控制台'), actions: [signOut]),
-        body: CategoriesScreen(api: _api, token: session.token, canManage: false),
+        body: CategoriesScreen(session: meridian, canManage: false),
       );
     }
     return DefaultTabController(
@@ -145,8 +149,8 @@ class _ConsoleAppState extends State<ConsoleApp> {
         ),
         body: TabBarView(
           children: [
-            CategoriesScreen(api: _api, token: session.token, canManage: true),
-            UsersScreen(api: _api, token: session.token),
+            CategoriesScreen(session: meridian, canManage: true),
+            UsersScreen(session: meridian),
           ],
         ),
       ),

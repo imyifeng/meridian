@@ -8,6 +8,7 @@ import 'screens/login_screen.dart';
 import 'screens/memos_screen.dart';
 import 'screens/setup_screen.dart';
 import 'server_address_store.dart';
+import 'session.dart';
 import 'token_store.dart';
 
 enum AppState { loading, setup, login, memos, error }
@@ -70,7 +71,9 @@ class _MeridianAppState extends State<MeridianApp> {
   late final MemoCache _memoCache;
   late final ServerAddressStore _addressStore;
   AppState _state = AppState.loading;
-  String? _token;
+  // The signed-in stretch's api-plus-credential (see MeridianSession):
+  // built once the credential is proven, dropped at sign-out.
+  MeridianSession? _session;
   // True once the app entered the memos on a cached snapshot because the
   // server was unreachable (T8); MemosScreen takes it from there.
   bool _offline = false;
@@ -115,7 +118,7 @@ class _MeridianAppState extends State<MeridianApp> {
       }
       await _api().memos(token); // prove the stored credential still works
       setState(() {
-        _token = token;
+        _session = MeridianSession(api: _api(), token: token);
         _offline = false;
         _state = AppState.memos;
       });
@@ -136,7 +139,7 @@ class _MeridianAppState extends State<MeridianApp> {
                 : null;
         if (snapshot != null) {
           setState(() {
-            _token = snapshot.token;
+            _session = MeridianSession(api: _api(), token: snapshot.token);
             _offline = true;
             _state = AppState.memos;
           });
@@ -162,7 +165,7 @@ class _MeridianAppState extends State<MeridianApp> {
     await _addressStore.write(_serverAddress.text.trim());
     await widget.tokenStore.write(session.token);
     setState(() {
-      _token = session.token;
+      _session = MeridianSession(api: _api(), token: session.token);
       _state = AppState.memos;
     });
   }
@@ -173,7 +176,7 @@ class _MeridianAppState extends State<MeridianApp> {
     // device must not read the previous one's memos offline.
     _memoCache.clear();
     setState(() {
-      _token = null;
+      _session = null;
       _offline = false;
       _state = AppState.login;
     });
@@ -202,8 +205,7 @@ class _MeridianAppState extends State<MeridianApp> {
             onAuthenticated: _authenticated,
           ),
         AppState.memos => MemosScreen(
-            api: _api(),
-            token: _token!,
+            session: _session!,
             cache: _memoCache,
             initialOffline: _offline,
             reminderNotifications: widget.reminderNotifications,
