@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../editor/meridian_editor.dart';
 import '../memo_cache.dart';
 import '../memo_filters.dart';
 import '../memo_list_loader.dart';
@@ -448,9 +449,16 @@ class _MemosScreenState extends State<MemosScreen> {
       itemCount: memos.length,
       itemBuilder: (context, i) {
         final memo = memos[i];
+        // The preview shows the rendered text, never the Markdown source
+        // (ADR-0006): the same parse the editor and reader run, collapsed
+        // to one paragraph; the row clips it to one line.
+        final preview =
+            memo.body.isEmpty ? '' : markdownPlainText(memo.body);
         return ListTile(
           title: Text(memo.title),
-          subtitle: memo.body.isEmpty ? null : Text(memo.body, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: preview.isEmpty
+              ? null
+              : Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
           // The alarm marks a memo carrying a reminder (T9) — one set on any
           // device shows up here, because it rode along with the memo.
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [

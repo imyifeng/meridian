@@ -101,6 +101,34 @@ bool _withinInlineSet(AttributedText text) {
   );
 }
 
+/// The stored Markdown of a memo body as one plain-text paragraph (T22):
+/// parsed like the editor parses it, every block contributing its rendered
+/// text — a heading its words, bold its words, a table its cells — joined
+/// with single spaces. Feeds the list preview, where syntax symbols must
+/// never appear (ADR-0006). Nodes that carry no text (images, horizontal
+/// rules) contribute nothing.
+String markdownPlainText(String markdown) {
+  final document = deserializeMarkdownToDocument(markdown);
+  final blocks = <String>[];
+  for (var i = 0; i < document.nodeCount; i++) {
+    final node = document.getNodeAt(i)!;
+    if (node is TableBlockNode) {
+      for (var row = 0; row < node.rowCount; row++) {
+        blocks.add([
+          for (var column = 0; column < node.columnCount; column++)
+            node
+                .getCell(rowIndex: row, columnIndex: column)
+                .text
+                .toPlainText(includePlaceholders: false),
+        ].join(' '));
+      }
+    } else if (node is TextNode) {
+      blocks.add(node.text.toPlainText(includePlaceholders: false));
+    }
+  }
+  return blocks.map((b) => b.trim()).where((b) => b.isNotEmpty).join(' ');
+}
+
 /// Notifies on every document edit — the Editor's listener signature is
 /// event-based, this adapts it to a plain Listenable for the toolbar.
 class _DocumentChanges with ChangeNotifier implements EditListener {

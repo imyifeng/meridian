@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../editor/meridian_editor.dart';
 import '../session.dart';
 
 /// The recycle bin (T5): every trashed memo of the signed-in user, most
@@ -98,9 +99,16 @@ class _TrashScreenState extends State<TrashScreen> {
             itemCount: memos.length,
             itemBuilder: (context, i) {
               final memo = memos[i];
+              // Same preview rule as the memo list (T22): rendered text,
+              // never the Markdown source (ADR-0006).
+              final preview =
+                  memo.body.isEmpty ? '' : markdownPlainText(memo.body);
               return ListTile(
                 title: Text(memo.title),
-                subtitle: memo.body.isEmpty ? null : Text(memo.body, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: preview.isEmpty
+                    ? null
+                    : Text(preview,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [

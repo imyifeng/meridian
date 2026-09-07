@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/imyifeng/meridian/internal/store"
 )
@@ -30,7 +29,7 @@ func (s *server) setupAdministrator(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if strings.TrimSpace(body.Username) == "" || body.Password == "" {
+	if !validCredentials(body.Username, body.Password) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}

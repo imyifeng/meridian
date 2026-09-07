@@ -73,6 +73,30 @@ void main() {
     expect(find.byKey(const Key('login_button')), findsOneWidget);
   });
 
+  testWidgets('断网时登录提示无法连接，停在登录页', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+
+    await tester.pumpWidget(
+      MeridianApp(
+        baseUrl: fake.url,
+        tokenStore: InMemoryTokenStore(),
+        apiClient: fake.client,
+      ),
+    );
+    await tester.pumpAndSettle(); // bootstrap succeeds, lands on login
+
+    fake.offline = true; // the network drops before the sign-in attempt
+    await tester.enterText(find.byKey(const Key('username_field')), 'yifeng');
+    await tester.enterText(
+        find.byKey(const Key('password_field')), 'correct horse');
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('无法连接服务器，请检查服务器地址'), findsOneWidget);
+    expect(find.byKey(const Key('login_button')), findsOneWidget);
+  });
+
   testWidgets('未初始化实例先创建管理员（Setup Wizard）', (tester) async {
     final fake = FakeMeridianServer(); // uninitialized
 

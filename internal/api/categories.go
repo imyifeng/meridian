@@ -28,10 +28,7 @@ func (s *server) listCategories(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if categories == nil {
-		categories = []store.Category{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"categories": categories})
+	writeJSON(w, http.StatusOK, map[string]any{"categories": nonNil(categories)})
 }
 
 type categoryInput struct {
