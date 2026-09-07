@@ -198,9 +198,10 @@ class _UsersScreenState extends State<UsersScreen> {
                             tooltip: '重置密码',
                             onPressed: () => _resetPassword(user),
                           ),
-                          // The administrator row offers no delete: removing
-                          // one's own user is rejected server-side too.
-                          if (!user.isAdministrator)
+                          // Only the signed-in user's own row offers no
+                          // delete: the server rejects self-deletion too
+                          // (the setup wizard is one-way, ADR-0001).
+                          if (user.id != widget.session.user?.id)
                             IconButton(
                               key: Key('delete_user_${user.id}'),
                               icon: const Icon(Icons.delete_outline),

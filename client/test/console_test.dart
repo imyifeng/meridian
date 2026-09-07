@@ -226,4 +226,51 @@ void main() {
       throwsA(isA<ApiException>()),
     );
   });
+
+  testWidgets('管理员删除其他管理员，确认框显示备忘录数量', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('admin', 'correct horse');
+    fake.registerUser('chief', 'chief password', role: 'administrator');
+    fake.seedMemo('chief', 'chief 的备忘录');
+
+    await signInAs(tester, fake);
+    await switchToUsers(tester);
+    await tester.tap(find.byKey(Key('delete_user_${fake.userByName('chief')['id']}')));
+    await tester.pumpAndSettle();
+
+    // The confirmation names the number of memos the cascade will take —
+    // an administrator's memos cascade like anyone else's (Story 26).
+    expect(find.textContaining('该用户有 1 条备忘录'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('confirm_delete_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('user_chief')), findsNothing);
+    // The deleted administrator is gone: their credentials no longer log in.
+    final api = MeridianApi(baseUrl: fake.url, client: fake.client);
+    await expectLater(
+      api.login('chief', 'chief password'),
+      throwsA(isA<ApiException>()),
+    );
+  });
+
+  testWidgets('自己所在行没有删除入口', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('admin', 'correct horse');
+    fake.createUser('bob', 'bob password');
+
+    await signInAs(tester, fake);
+    await switchToUsers(tester);
+
+    // The signed-in administrator cannot delete themselves — the server
+    // rejects it too (self_delete) — while other rows keep the affordance.
+    expect(
+      find.byKey(Key('delete_user_${fake.userByName('admin')['id']}')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(Key('delete_user_${fake.userByName('bob')['id']}')),
+      findsOneWidget,
+    );
+  });
 }

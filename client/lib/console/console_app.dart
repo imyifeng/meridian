@@ -73,9 +73,11 @@ class _ConsoleAppState extends State<ConsoleApp> {
 
   Widget _consoleScaffold() {
     final session = _session!;
-    // One session value carries the endpoint-plus-credential to every
-    // console screen; the wire session stays only for the role check.
-    final meridian = MeridianSession(api: _api, token: session.token);
+    // One session value carries the endpoint, the credential, and the
+    // signed-in user to every console screen; the wire session stays only
+    // for the role check.
+    final meridian =
+        MeridianSession(api: _api, token: session.token, user: session.user);
     final signOut = IconButton(
       icon: const Icon(Icons.logout),
       tooltip: '退出登录',
