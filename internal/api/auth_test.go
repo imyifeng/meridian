@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/imyifeng/meridian/internal/api/apitest"
@@ -93,6 +94,37 @@ func TestSetupWizardRejectsBlankFields(t *testing.T) {
 		if resp := env.Call("POST", "/api/v1/setup/administrator", "", body, nil); resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
 		}
+	}
+}
+
+func TestSetupWizardRejectsInvalidPasswords(t *testing.T) {
+	env := apitest.NewEnv(t)
+
+	// The wizard applies the same credential rules as user creation: an
+	// all-whitespace password is a typo, and one beyond bcrypt's 72 bytes
+	// would otherwise surface as a hashing error instead of a 400.
+	cases := map[string]map[string]string{
+		"whitespace password": {"username": "yifeng", "password": "   "},
+		"over-long password":  {"username": "yifeng", "password": strings.Repeat("x", 73)},
+	}
+	for name, body := range cases {
+		var out struct {
+			Error string `json:"error"`
+		}
+		resp := env.Call("POST", "/api/v1/setup/administrator", "", body, &out)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
+		}
+		if out.Error != "invalid_request" {
+			t.Errorf("%s: error %q, want invalid_request", name, out.Error)
+		}
+	}
+
+	// A rejected attempt does not consume the one-way wizard (ADR-0001):
+	// the instance is still uninitialized and a good setup still succeeds.
+	if resp := env.Call("POST", "/api/v1/setup/administrator", "",
+		map[string]string{"username": "yifeng", "password": "correct horse"}, nil); resp.StatusCode != http.StatusCreated {
+		t.Errorf("setup after rejected attempts: status %d, want 201", resp.StatusCode)
 	}
 }
 
