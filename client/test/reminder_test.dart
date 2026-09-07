@@ -168,6 +168,60 @@ void main() {
     expect(fake.remindAtOf('交房租'), isNull);
   });
 
+  testWidgets('可设置一年以后的提醒：保存、修改与取消都不受人为上限', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    await loginAsYifeng(tester, fake, now: () => editorNow);
+
+    await tester.tap(find.byKey(const Key('new_memo_button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('title_field')), '续租');
+
+    // The spec puts no horizon on a reminder, so a date past a year out must
+    // stay reachable: the month-year header of the picker (January 2026 —
+    // the grid opens on editorNow's month) toggles to the year grid, picking
+    // 2027 lands back on January of that year.
+    await tester.tap(find.byKey(const Key('set_reminder_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('January 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('2027'),
+    ));
+    await tester.pumpAndSettle();
+    await drivePickers(tester, day: '15', hour: '08', minute: '30');
+    expect(valueText(tester), '2027-01-15 08:30');
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+    final saved = fake.remindAtOf('续租');
+    expect(saved!.year, 2027);
+    expect(saved.month, 1);
+    expect(saved.day, 15);
+
+    // Story 17 keeps holding for far reminders: change and cancel work the
+    // same. The change picker reopens on the stored far date.
+    await tester.tap(find.text('续租'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('change_reminder_button')));
+    await tester.pumpAndSettle();
+    await drivePickers(tester, day: '15', hour: '09', minute: '45');
+    expect(valueText(tester), '2027-01-15 09:45');
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+    final changed = fake.remindAtOf('续租')!;
+    expect(changed.hour, 9);
+    expect(changed.minute, 45);
+
+    await tester.tap(find.text('续租'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('clear_reminder_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+    expect(fake.remindAtOf('续租'), isNull);
+  });
+
   testWidgets('选择已过去的时刻被拒绝，提醒不会静默失效', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
