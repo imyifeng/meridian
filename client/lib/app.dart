@@ -11,13 +11,16 @@ import 'server_address_store.dart';
 import 'session.dart';
 import 'token_store.dart';
 
-enum AppState { loading, setup, login, memos, error }
+enum AppState { loading, setup, login, memos }
 
 /// MeridianApp wires the server address, the credential store, and the
 /// screen flow: setup wizard on an uninitialized instance, otherwise
 /// login (skipped when a stored credential still works), then memos. When
 /// the server is unreachable but a cached snapshot for the stored
-/// credential exists, it still enters the memos — read-only (ADR-0003).
+/// credential exists, it still enters the memos — read-only (ADR-0003);
+/// with no usable snapshot it lands on the login screen, where the server
+/// address is editable (a fresh install's default points at the device
+/// itself, so editing it is the only way to reach the instance).
 class MeridianApp extends StatefulWidget {
   final String baseUrl;
   final TokenStore tokenStore;
@@ -77,7 +80,6 @@ class _MeridianAppState extends State<MeridianApp> {
   // True once the app entered the memos on a cached snapshot because the
   // server was unreachable (T8); MemosScreen takes it from there.
   bool _offline = false;
-  String _message = '';
 
   @override
   void initState() {
@@ -130,9 +132,11 @@ class _MeridianAppState extends State<MeridianApp> {
         setState(() => _state = AppState.login);
       } else {
         // Offline with a cache for this credential (ADR-0003): read-only
-        // memos beat a dead end. MemosScreen keeps retrying until the
-        // connection returns. Everything else — unreachable with no usable
-        // cache, or a server error — is the error screen.
+        // memos beat the login page. MemosScreen keeps retrying until the
+        // connection returns. Without a usable snapshot — fresh install,
+        // none for this credential — the login screen is the way out: its
+        // address field carries the just-tried address, so the user can
+        // aim at the real instance instead of retrying a dead one.
         final snapshot =
             e.isUnreachable && token != null
                 ? await _snapshotForToken(token)
@@ -144,10 +148,7 @@ class _MeridianAppState extends State<MeridianApp> {
             _state = AppState.memos;
           });
         } else {
-          setState(() {
-            _message = '无法连接服务器，请检查服务器地址后重试';
-            _state = AppState.error;
-          });
+          setState(() => _state = AppState.login);
         }
       }
     }
@@ -213,23 +214,7 @@ class _MeridianAppState extends State<MeridianApp> {
             showReminder: !widget.webClient,
             onSignOut: _signedOut,
           ),
-        AppState.error => _errorScaffold(),
       },
-    );
-  }
-
-  Widget _errorScaffold() {
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(_message),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: _bootstrap, child: const Text('重试')),
-          ],
-        ),
-      ),
     );
   }
 }

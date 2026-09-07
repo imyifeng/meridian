@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:meridian/api_client.dart';
 import 'package:meridian/app.dart';
 import 'package:meridian/memo_cache.dart';
+import 'package:meridian/server_address_store.dart';
 import 'package:meridian/token_store.dart';
 
 import 'fake_meridian_server.dart';
@@ -106,23 +108,98 @@ void main() {
     expect(fab.onPressed, isNotNull);
   });
 
-  testWidgets('从没登录过（无缓存）断网时提示无法连接', (tester) async {
+  testWidgets('全新安装（无凭据）断网时进入登录页，地址可改', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
-    fake.offline = true;
+    fake.offline = true; // 手机上编译期默认地址指向手机自身，探测必然失败
 
     await tester.pumpWidget(MeridianApp(
-      baseUrl: fake.url,
+      baseUrl: 'http://127.0.0.1:8080', // 编译期默认值，全新安装无已存地址
       tokenStore: InMemoryTokenStore(),
       memoCache: InMemoryMemoCache(),
       apiClient: fake.client,
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('无法连接服务器，请检查服务器地址后重试'), findsOneWidget);
+    // 不再是只有重试按钮的错误死路：登录页带着可编辑的地址框，
+    // 预填刚尝试过的地址，改好即可登录。
+    final field = tester.widget<TextField>(
+        find.byKey(const Key('server_address_field')));
+    expect(field.controller!.text, 'http://127.0.0.1:8080');
+    expect(find.byKey(const Key('login_button')), findsOneWidget);
+    expect(find.text('无法连接服务器，请检查服务器地址后重试'), findsNothing);
   });
 
-  testWidgets('退出登录清除本地缓存，断网重启不再显示内容', (tester) async {
+  testWidgets('不可达首启落在登录页：改地址登录成功，地址被记住', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.offline = true;
+    final addressStore = InMemoryServerAddressStore();
+    final tokens = InMemoryTokenStore();
+
+    Future<void> openApp() async {
+      await tester.pumpWidget(MeridianApp(
+        baseUrl: 'http://127.0.0.1:8080',
+        tokenStore: tokens,
+        addressStore: addressStore,
+        memoCache: InMemoryMemoCache(),
+        apiClient: fake.client,
+      ));
+      await tester.pumpAndSettle();
+    }
+
+    await openApp();
+    expect(find.byKey(const Key('login_button')), findsOneWidget);
+
+    // 用户改上可达实例的地址，登录成功。
+    fake.offline = false;
+    await tester.enterText(
+        find.byKey(const Key('server_address_field')), fake.url);
+    await tester.enterText(find.byKey(const Key('username_field')), 'yifeng');
+    await tester.enterText(
+        find.byKey(const Key('password_field')), 'correct horse');
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    expect(find.text('暂无备忘录'), findsOneWidget);
+    expect(await addressStore.read(), fake.url);
+
+    // 下次启动自动带出该地址，凭据仍有效则直达备忘录（既有行为不变）。
+    await tester.pumpWidget(const SizedBox());
+    await openApp();
+    expect(find.byKey(const Key('login_button')), findsNothing);
+    expect(find.text('暂无备忘录'), findsOneWidget);
+  });
+
+  testWidgets('有凭据但缓存快照不匹配，断网重启进入登录页', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.offline = true;
+
+    final tokens = InMemoryTokenStore();
+    await tokens.write('a-stale-token');
+    final cache = InMemoryMemoCache();
+    // 快照属于另一个凭据：无论断网与否都绝不能展示给别人。
+    await cache.write(CachedSnapshot(
+      token: 'someone-elses',
+      memos: [Memo(id: 1, title: '别人的备忘录', body: '', categoryId: 1)],
+      categories: [Category(id: 1, name: '未分类', isBuiltin: true)],
+    ));
+
+    await tester.pumpWidget(MeridianApp(
+      baseUrl: fake.url,
+      tokenStore: tokens,
+      memoCache: cache,
+      apiClient: fake.client,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('offline_banner')), findsNothing);
+    expect(find.text('别人的备忘录'), findsNothing);
+    expect(find.byKey(const Key('server_address_field')), findsOneWidget);
+    expect(find.byKey(const Key('login_button')), findsOneWidget);
+  });
+
+  testWidgets('退出登录清除本地缓存，断网重启进入登录页而非显示旧内容', (tester) async {
     final (fake, tokens, cache) = await loginAndCacheOneMemo(tester);
 
     await tester.tap(find.byIcon(Icons.logout));
@@ -133,7 +210,8 @@ void main() {
 
     expect(find.byKey(const Key('offline_banner')), findsNothing);
     expect(find.text('购物清单'), findsNothing);
-    expect(find.text('无法连接服务器，请检查服务器地址后重试'), findsOneWidget);
+    expect(find.byKey(const Key('server_address_field')), findsOneWidget);
+    expect(find.byKey(const Key('login_button')), findsOneWidget);
   });
 
   testWidgets('运行中断网：保存失败有明确提示，列表转入只读并自动恢复', (tester) async {
