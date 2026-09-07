@@ -8,7 +8,11 @@ import 'credentials_form.dart';
 /// forever (ADR-0001).
 class SetupScreen extends StatelessWidget {
   final TextEditingController serverAddress;
-  final MeridianApi api;
+
+  /// Built at submit time, not screen-build time: the user may have just
+  /// edited the address field, and the request must go where the field
+  /// now points (#56).
+  final MeridianApi Function() api;
 
   /// False in the Web 简易客户端 (T10): same-origin, no address field.
   final bool showServerAddress;
@@ -38,7 +42,7 @@ class SetupScreen extends StatelessWidget {
         submitLabel: '创建管理员',
         buttonKey: 'create_administrator_button',
         onSubmit: (username, password) async {
-          final session = await api.setupAdministrator(username, password);
+          final session = await api().setupAdministrator(username, password);
           await onAuthenticated(session);
         },
         onError: (e) {

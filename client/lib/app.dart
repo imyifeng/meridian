@@ -194,14 +194,14 @@ class _MeridianAppState extends State<MeridianApp> {
           ),
         AppState.setup => SetupScreen(
             serverAddress: _serverAddress,
-            api: _api(),
+            api: _api,
             showServerAddress: !widget.webClient,
             onAuthenticated: _authenticated,
             onAlreadyInitialized: () => setState(() => _state = AppState.login),
           ),
         AppState.login => LoginScreen(
             serverAddress: _serverAddress,
-            api: _api(),
+            api: _api,
             showServerAddress: !widget.webClient,
             onAuthenticated: _authenticated,
           ),
