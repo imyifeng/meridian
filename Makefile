@@ -10,18 +10,20 @@ FLUTTER ?= flutter
 
 .PHONY: web-console web-client build test
 
-# Builds the console SPA into internal/webconsole/dist (gitignored build
-# output) with the base href the server mounts it under.
-web-console:
-	cd client && $(FLUTTER) build web --target lib/console_main.dart --base-href=/console/
-	find internal/webconsole/dist -mindepth 1 ! -name '.gitignore' -delete
-	cp -r client/build/web/. internal/webconsole/dist/
+# Builds one frontend SPA into its embedded dist/ with the base href the
+# server mounts it under: $(1) lib entry, $(2) base href, $(3) dist dir.
+define flutter-web
+cd client && $(FLUTTER) build web --target $(1) --base-href=$(2)
+find $(3) -mindepth 1 ! -name '.gitignore' -delete
+cp -r client/build/web/. $(3)/
+endef
 
-# Builds the Web 简易客户端 SPA into internal/webclient/dist the same way.
+web-console:
+	$(call flutter-web,lib/console_main.dart,/console/,internal/webconsole/dist)
+
+# Builds the Web 简易客户端 SPA the same way.
 web-client:
-	cd client && $(FLUTTER) build web --target lib/web_main.dart --base-href=/web/
-	find internal/webclient/dist -mindepth 1 ! -name '.gitignore' -delete
-	cp -r client/build/web/. internal/webclient/dist/
+	$(call flutter-web,lib/web_main.dart,/web/,internal/webclient/dist)
 
 build: web-console web-client
 	go build -o build/meridian ./cmd/meridian
