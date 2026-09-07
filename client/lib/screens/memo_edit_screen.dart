@@ -22,11 +22,17 @@ class MemoEditScreen extends StatefulWidget {
   /// stale value riding along.
   final bool showReminder;
 
+  /// Clock for the reminder's future-only check ("a reminder set in the
+  /// past would sit on the memo and silently never fire"); production uses
+  /// the wall clock, tests inject a fixed one.
+  final DateTime Function()? now;
+
   const MemoEditScreen({
     super.key,
     required this.api,
     required this.token,
     this.showReminder = true,
+    this.now,
     this.memo,
   });
 
@@ -392,8 +398,10 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   /// Date first, then time — a future moment only. The picker offers no
   /// yesterday, and a time at or before now is rejected here: a reminder
   /// set in the past would sit on the memo and silently never fire.
+  DateTime get _now => (widget.now ?? DateTime.now)();
+
   Future<void> _pickReminder() async {
-    final now = DateTime.now();
+    final now = _now;
     final current = _remindAt;
     final initial = current != null && current.isAfter(now) ? current : now;
     final date = await showDatePicker(
@@ -413,7 +421,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     if (!mounted || time == null) return;
     final picked =
         DateTime(date.year, date.month, date.day, time.hour, time.minute);
-    if (!picked.isAfter(DateTime.now())) {
+    if (!picked.isAfter(_now)) {
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('提醒时间必须晚于当前时间')));
       return;

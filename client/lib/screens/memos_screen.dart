@@ -351,6 +351,7 @@ class _MemosScreenState extends State<MemosScreen> {
           api: widget.api,
           token: widget.token,
           showReminder: widget.showReminder,
+          now: widget.reminderNow,
           memo: memo),
     ));
     _reload();
