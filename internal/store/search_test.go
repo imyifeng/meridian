@@ -26,10 +26,10 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if _, err := s.CreateMemo(u.ID, "升级前的旧笔记", "正文里没有关键词", 0, []string{"英语"}, nil); err != nil {
+	if _, err := s.CreateMemo(u.ID, store.MemoInput{Title: "升级前的旧笔记", Body: "正文里没有关键词", Tags: []string{"英语"}}); err != nil {
 		t.Fatalf("create memo: %v", err)
 	}
-	if _, err := s.CreateMemo(u.ID, "已删除的笔记", "", 0, nil, nil); err != nil {
+	if _, err := s.CreateMemo(u.ID, store.MemoInput{Title: "已删除的笔记"}); err != nil {
 		t.Fatalf("create memo: %v", err)
 	}
 	if err := s.DeleteMemo(u.ID, 2); err != nil {

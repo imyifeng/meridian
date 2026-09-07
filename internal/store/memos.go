@@ -33,7 +33,7 @@ type Memo struct {
 
 const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at, deleted_at, remind_at"
 
-func scanMemo(row interface{ Scan(...any) error }) (Memo, error) {
+func scanMemo(row scanner) (Memo, error) {
 	var m Memo
 	var created, updated, deleted, remind string
 	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated, &deleted, &remind); err != nil {
@@ -114,16 +114,32 @@ func (s *Store) attachTags(userID int64, memos []Memo) error {
 	return rows.Err()
 }
 
-// CreateMemo inserts a memo owned by userID. categoryID 0 means "no explicit
-// category": the memo falls back to the built-in 未分类. Any other value must
-// name an existing category, or ErrCategoryNotFound comes back. tags may be
-// nil (no tags) and is normalized; ErrInvalidTag reports bad names. remindAt
-// nil starts with no reminder (T9).
-func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, tags []string, remindAt *time.Time) (*Memo, error) {
-	names, err := normalizeTags(tags)
+// MemoInput carries the user-editable fields of a memo between the API's
+// validation and CreateMemo/UpdateMemo. The field semantics mirror the wire:
+// CategoryID 0 means "no explicit category" (create falls back to the
+// built-in 未分类, update keeps the current one), Tags nil means "not
+// specified" (create starts with none, update keeps the standing set), and
+// RemindAt nil means "not specified" (the zero time is the clear value, T9).
+type MemoInput struct {
+	Title      string
+	Body       string
+	CategoryID int64
+	Tags       []string
+	RemindAt   *time.Time
+}
+
+// CreateMemo inserts a memo owned by userID with the fields of in.
+// in.CategoryID 0 means "no explicit category": the memo falls back to the
+// built-in 未分类. Any other value must name an existing category, or
+// ErrCategoryNotFound comes back. in.Tags may be nil (no tags) and is
+// normalized; ErrInvalidTag reports bad names. in.RemindAt nil starts with
+// no reminder (T9).
+func (s *Store) CreateMemo(userID int64, in MemoInput) (*Memo, error) {
+	names, err := normalizeTags(in.Tags)
 	if err != nil {
 		return nil, err
 	}
+	categoryID := in.CategoryID
 	if categoryID == 0 {
 		if categoryID, err = s.builtinCategoryID(); err != nil {
 			return nil, err
@@ -133,7 +149,7 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	} else if !ok {
 		return nil, ErrCategoryNotFound
 	}
-	remind := formatRemindAt(remindAt)
+	remind := formatRemindAt(in.RemindAt)
 	ts := now()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -142,7 +158,7 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	defer tx.Rollback()
 	res, err := tx.Exec(
 		"INSERT INTO memos (user_id, category_id, title, body, remind_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		userID, categoryID, title, body, remind, ts, ts,
+		userID, categoryID, in.Title, in.Body, remind, ts, ts,
 	)
 	if err != nil {
 		return nil, err
@@ -154,7 +170,7 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	if err := insertMemoTags(tx, id, names); err != nil {
 		return nil, err
 	}
-	if err := indexMemo(tx, id, title, body, names); err != nil {
+	if err := indexMemo(tx, id, in.Title, in.Body, names); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -163,8 +179,8 @@ func (s *Store) CreateMemo(userID int64, title, body string, categoryID int64, t
 	m := &Memo{
 		ID:         id,
 		UserID:     userID,
-		Title:      title,
-		Body:       body,
+		Title:      in.Title,
+		Body:       in.Body,
 		CategoryID: categoryID,
 		Tags:       names,
 		CreatedAt:  parseTime(ts),
@@ -245,29 +261,29 @@ func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 }
 
 // UpdateMemo rewrites title and body of a user's own live memo, moves it to
-// categoryID when that is nonzero (it must exist; 0 leaves the category as
-// it was), replaces the tag set when tags is non-nil — an empty list
+// in.CategoryID when that is nonzero (it must exist; 0 leaves the category
+// as it was), replaces the tag set when in.Tags is non-nil — an empty list
 // removes every tag, nil leaves the tags as they were — and sets the
-// reminder when remindAt is non-nil (a zero time clears it; nil keeps the
+// reminder when in.RemindAt is non-nil (a zero time clears it; nil keeps the
 // standing one, T9). A trashed memo is out of reach until restored (T5).
-func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID int64, tags []string, remindAt *time.Time) (*Memo, error) {
+func (s *Store) UpdateMemo(userID, memoID int64, in MemoInput) (*Memo, error) {
 	var names []string
-	if tags != nil {
+	if in.Tags != nil {
 		var err error
-		if names, err = normalizeTags(tags); err != nil {
+		if names, err = normalizeTags(in.Tags); err != nil {
 			return nil, err
 		}
 	}
-	if categoryID != 0 {
-		if ok, err := s.categoryExists(categoryID); err != nil {
+	if in.CategoryID != 0 {
+		if ok, err := s.categoryExists(in.CategoryID); err != nil {
 			return nil, err
 		} else if !ok {
 			return nil, ErrCategoryNotFound
 		}
 	}
 	var remindArg any // nil keeps the standing remind_at (COALESCE)
-	if remindAt != nil {
-		remindArg = formatRemindAt(remindAt)
+	if in.RemindAt != nil {
+		remindArg = formatRemindAt(in.RemindAt)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -276,7 +292,7 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 	defer tx.Rollback()
 	res, err := tx.Exec(
 		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, remind_at = COALESCE(?, remind_at), updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
-		title, body, categoryID, categoryID, remindArg, now(), memoID, userID,
+		in.Title, in.Body, in.CategoryID, in.CategoryID, remindArg, now(), memoID, userID,
 	)
 	if err != nil {
 		return nil, err
@@ -302,7 +318,7 @@ func (s *Store) UpdateMemo(userID, memoID int64, title, body string, categoryID 
 			return nil, err
 		}
 	}
-	if err := indexMemo(tx, memoID, title, body, finalTags); err != nil {
+	if err := indexMemo(tx, memoID, in.Title, in.Body, finalTags); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/imyifeng/meridian/internal/store"
@@ -73,6 +74,15 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 // wrapped by requireAuth.
 func identity(r *http.Request) *store.User {
 	return r.Context().Value(identityKey{}).(*store.User)
+}
+
+// pathID parses the {id} path value shared by every resource route.
+func pathID(r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

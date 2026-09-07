@@ -25,6 +25,18 @@ type Store struct {
 	db *sql.DB
 }
 
+// execer is the slice of database/sql a write needs; *sql.DB and *sql.Tx
+// both satisfy it.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// scanner is the slice of database/sql a row read needs; *sql.Row and
+// *sql.Rows both satisfy it.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
 func Open(path string) (*Store, error) {
 	// WAL for durability with a concurrent reader; foreign keys enforced on
 	// every connection the pool hands out; busy_timeout rides out writer
