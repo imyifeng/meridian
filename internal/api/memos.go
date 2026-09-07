@@ -26,47 +26,48 @@ type memoInput struct {
 	RemindAt *string `json:"remind_at"`
 }
 
-func (in memoInput) validate() (title, body string, categoryID int64, tags []string, remindAt *time.Time, ok bool) {
-	title = strings.TrimSpace(in.Title)
+func (in memoInput) validate() (store.MemoInput, bool) {
+	title := strings.TrimSpace(in.Title)
 	if title == "" {
-		return "", "", 0, nil, nil, false
+		return store.MemoInput{}, false
 	}
+	out := store.MemoInput{Title: title, Body: in.Body}
 	if in.CategoryID != nil {
 		if *in.CategoryID <= 0 {
-			return "", "", 0, nil, nil, false
+			return store.MemoInput{}, false
 		}
-		categoryID = *in.CategoryID
+		out.CategoryID = *in.CategoryID
 	}
 	if in.Tags != nil {
-		tags = *in.Tags
+		out.Tags = *in.Tags
 	}
 	if in.RemindAt != nil {
 		if *in.RemindAt == "" {
 			// A zero time is the "clear" value: the store writes '' for it.
 			clear := time.Time{}
-			remindAt = &clear
+			out.RemindAt = &clear
 		} else {
 			t, err := time.Parse(time.RFC3339, *in.RemindAt)
 			if err != nil {
-				return "", "", 0, nil, nil, false
+				return store.MemoInput{}, false
 			}
-			remindAt = &t
+			out.RemindAt = &t
 		}
 	}
-	return title, in.Body, categoryID, tags, remindAt, true
+	return out, true
 }
 
 func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
-	var in memoInput
-	if !decodeBody(w, r, &in) {
+	var raw memoInput
+	if !decodeBody(w, r, &raw) {
 		return
 	}
-	title, body, categoryID, tags, remindAt, ok := in.validate()
+	in, ok := raw.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.CreateMemo(identity(r).ID, title, body, categoryID, tags, remindAt)
+	m, err := s.st.CreateMemo(identity(r).ID, in)
 	if errors.Is(err, store.ErrCategoryNotFound) {
 		writeError(w, http.StatusBadRequest, "unknown_category")
 		return
@@ -126,16 +127,8 @@ func (s *server) listTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tags": names})
 }
 
-func (s *server) memoID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		return 0, false
-	}
-	return id, true
-}
-
 func (s *server) getMemo(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.memoID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
@@ -153,21 +146,21 @@ func (s *server) getMemo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) updateMemo(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.memoID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	var in memoInput
-	if !decodeBody(w, r, &in) {
+	var raw memoInput
+	if !decodeBody(w, r, &raw) {
 		return
 	}
-	title, body, categoryID, tags, remindAt, ok := in.validate()
+	in, ok := raw.validate()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	m, err := s.st.UpdateMemo(identity(r).ID, id, title, body, categoryID, tags, remindAt)
+	m, err := s.st.UpdateMemo(identity(r).ID, id, in)
 	if errors.Is(err, store.ErrCategoryNotFound) {
 		writeError(w, http.StatusBadRequest, "unknown_category")
 		return
@@ -188,7 +181,7 @@ func (s *server) updateMemo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteMemo(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.memoID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return

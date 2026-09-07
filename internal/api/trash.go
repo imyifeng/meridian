@@ -24,7 +24,7 @@ func (s *server) listTrash(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) restoreMemo(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.memoID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
@@ -40,7 +40,7 @@ func (s *server) restoreMemo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) purgeMemo(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.memoID(r)
+	id, ok := pathID(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return

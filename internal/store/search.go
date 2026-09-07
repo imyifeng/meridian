@@ -34,10 +34,8 @@ func memosFTSRow(title, body string, tags []string) (string, string, string) {
 // ftsInsert writes one row into memos_fts; all three texts must already be
 // CJK-spaced. Shared by the incremental and the wholesale paths so the row
 // shape lives in exactly one place.
-func ftsInsert(w interface {
-	Exec(query string, args ...any) (sql.Result, error)
-}, memoID int64, spacedTitle, spacedBody, spacedTags string) error {
-	_, err := w.Exec(
+func ftsInsert(q execer, memoID int64, spacedTitle, spacedBody, spacedTags string) error {
+	_, err := q.Exec(
 		"INSERT INTO memos_fts (rowid, title, body, tags) VALUES (?, ?, ?, ?)",
 		memoID, spacedTitle, spacedBody, spacedTags,
 	)

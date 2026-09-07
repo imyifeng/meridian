@@ -268,9 +268,7 @@ func (s *Store) createSession(userID int64) (string, error) {
 	return insertSession(s.db, userID)
 }
 
-func insertSession(q interface {
-	Exec(query string, args ...any) (sql.Result, error)
-}, userID int64) (string, error) {
+func insertSession(q execer, userID int64) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

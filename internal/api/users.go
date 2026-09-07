@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/imyifeng/meridian/internal/store"
@@ -57,15 +56,6 @@ func (s *server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, u)
-}
-
-// pathID parses the {id} path value shared by every resource route.
-func pathID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		return 0, false
-	}
-	return id, true
 }
 
 func (s *server) resetPassword(w http.ResponseWriter, r *http.Request) {
