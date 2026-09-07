@@ -7,7 +7,11 @@ import 'credentials_form.dart';
 /// server address.
 class LoginScreen extends StatelessWidget {
   final TextEditingController serverAddress;
-  final MeridianApi api;
+
+  /// Built at submit time, not screen-build time: the user may have just
+  /// edited the address field, and the request must go where the field
+  /// now points (#56).
+  final MeridianApi Function() api;
 
   /// False in the Web 简易客户端 (T10): same-origin, no address field.
   final bool showServerAddress;
@@ -31,7 +35,7 @@ class LoginScreen extends StatelessWidget {
         submitLabel: '登录',
         buttonKey: 'login_button',
         onSubmit: (username, password) async {
-          final session = await api.login(username, password);
+          final session = await api().login(username, password);
           await onAuthenticated(session);
         },
         onError: loginErrorMessage,
