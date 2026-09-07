@@ -57,6 +57,21 @@ func (in memoInput) validate() (store.MemoInput, bool) {
 	return out, true
 }
 
+// writeMemoError maps the domain errors memo creation and update share to
+// their HTTP responses, reporting whether err was one of them. Handler-only
+// errors (a missing memo, for one) stay with their handlers.
+func writeMemoError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, store.ErrCategoryNotFound):
+		writeError(w, http.StatusBadRequest, "unknown_category")
+	case errors.Is(err, store.ErrInvalidTag):
+		writeError(w, http.StatusBadRequest, "invalid_tag")
+	default:
+		return false
+	}
+	return true
+}
+
 func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 	var raw memoInput
 	if !decodeBody(w, r, &raw) {
@@ -68,12 +83,7 @@ func (s *server) createMemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, err := s.st.CreateMemo(identity(r).ID, in)
-	if errors.Is(err, store.ErrCategoryNotFound) {
-		writeError(w, http.StatusBadRequest, "unknown_category")
-		return
-	}
-	if errors.Is(err, store.ErrInvalidTag) {
-		writeError(w, http.StatusBadRequest, "invalid_tag")
+	if writeMemoError(w, err) {
 		return
 	}
 	if err != nil {
@@ -161,16 +171,11 @@ func (s *server) updateMemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, err := s.st.UpdateMemo(identity(r).ID, id, in)
-	if errors.Is(err, store.ErrCategoryNotFound) {
-		writeError(w, http.StatusBadRequest, "unknown_category")
-		return
-	}
-	if errors.Is(err, store.ErrInvalidTag) {
-		writeError(w, http.StatusBadRequest, "invalid_tag")
-		return
-	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	if writeMemoError(w, err) {
 		return
 	}
 	if err != nil {
