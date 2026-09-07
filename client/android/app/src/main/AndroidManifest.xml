@@ -2,10 +2,20 @@
     <!-- Reminder notifications (T9): the runtime ask happens at app start;
          this manifest entry declares it. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Online-first client (ADR-0003): every API call needs network access.
+         The debug/profile variants bring this in via manifest merge (Flutter
+         tooling); a release build would ship without it and be fully offline
+         (T19). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Cleartext http:// must be allowed: the user configures an arbitrary
+         http:// LAN server address (story #39; TLS is left to the server-side
+         reverse proxy), so no networkSecurityConfig can enumerate the allowed
+         hosts. Trial Build is never distributed externally (CONTEXT.md). -->
     <application
         android:label="Meridian"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
