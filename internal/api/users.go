@@ -19,10 +19,7 @@ func (s *server) listUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if users == nil {
-		users = []store.UserSummary{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+	writeJSON(w, http.StatusOK, map[string]any{"users": nonNil(users)})
 }
 
 type userInput struct {

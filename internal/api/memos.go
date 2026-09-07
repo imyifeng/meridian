@@ -117,10 +117,7 @@ func (s *server) listMemos(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if memos == nil {
-		memos = []store.Memo{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"memos": memos})
+	writeJSON(w, http.StatusOK, map[string]any{"memos": nonNil(memos)})
 }
 
 // listTags serves the signed-in user's own tag names — the autocomplete
@@ -131,10 +128,7 @@ func (s *server) listTags(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if names == nil {
-		names = []string{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"tags": names})
+	writeJSON(w, http.StatusOK, map[string]any{"tags": nonNil(names)})
 }
 
 func (s *server) getMemo(w http.ResponseWriter, r *http.Request) {
