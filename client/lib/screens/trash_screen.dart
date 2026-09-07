@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../session.dart';
 
 /// The recycle bin (T5): every trashed memo of the signed-in user, most
 /// recently deleted first. Restore puts a memo back into its original
 /// category; purging asks once and is then final. The recycle bin never
 /// empties itself.
 class TrashScreen extends StatefulWidget {
-  final MeridianApi api;
-  final String token;
+  final MeridianSession session;
 
-  const TrashScreen({super.key, required this.api, required this.token});
+  const TrashScreen({super.key, required this.session});
 
   @override
   State<TrashScreen> createState() => _TrashScreenState();
@@ -22,18 +22,18 @@ class _TrashScreenState extends State<TrashScreen> {
   @override
   void initState() {
     super.initState();
-    _future = widget.api.trash(widget.token);
+    _future = widget.session.api.trash(widget.session.token);
   }
 
   void _reload() {
     setState(() {
-      _future = widget.api.trash(widget.token);
+      _future = widget.session.api.trash(widget.session.token);
     });
   }
 
   Future<void> _restore(Memo memo) async {
     try {
-      await widget.api.restoreMemo(widget.token, id: memo.id);
+      await widget.session.api.restoreMemo(widget.session.token, id: memo.id);
       _reload();
     } on ApiException {
       if (mounted) {
@@ -57,7 +57,7 @@ class _TrashScreenState extends State<TrashScreen> {
     );
     if (confirmed != true) return;
     try {
-      await widget.api.purgeMemo(widget.token, id: memo.id);
+      await widget.session.api.purgeMemo(widget.session.token, id: memo.id);
       _reload();
     } on ApiException {
       if (mounted) {

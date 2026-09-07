@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../editor/meridian_editor.dart';
 import '../reminders.dart';
+import '../session.dart';
 
 /// Title + WYSIWYG body editor (ADR-0006) for creating and editing a memo,
 /// plus the category picker: memos live in exactly one taxonomy category
@@ -11,8 +12,7 @@ import '../reminders.dart';
 /// degraded by the editor. Offline reading is MemoViewScreen's job (T8),
 /// not a mode of this screen.
 class MemoEditScreen extends StatefulWidget {
-  final MeridianApi api;
-  final String token;
+  final MeridianSession session;
   final Memo? memo; // null → create mode
 
   /// False in the Web 简易客户端 (T10): the reminder row is not offered.
@@ -29,8 +29,7 @@ class MemoEditScreen extends StatefulWidget {
 
   const MemoEditScreen({
     super.key,
-    required this.api,
-    required this.token,
+    required this.session,
     this.showReminder = true,
     this.now,
     this.memo,
@@ -71,12 +70,12 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     _tags = List.of(widget.memo?.tags ?? const <String>[]);
     _remindAt = widget.memo?.remindAt;
     _categoryId = widget.memo?.categoryId;
-    _categories = widget.api.categories(widget.token);
+    _categories = widget.session.api.categories(widget.session.token);
     _loadKnownTags();
   }
 
   void _loadKnownTags() {
-    widget.api.tags(widget.token).then((tags) {
+    widget.session.api.tags(widget.session.token).then((tags) {
       if (mounted) setState(() => _knownTags = tags);
     }).catchError((_) {
       // Suggestions are a convenience: an empty history beats a broken
@@ -131,11 +130,11 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     try {
       final body = _bodyEditable ? _bodyEditor.markdown : widget.memo?.body ?? '';
       if (widget.memo == null) {
-        await widget.api.createMemo(widget.token,
+        await widget.session.api.createMemo(widget.session.token,
             title: title, body: body, categoryId: _categoryId, tags: _tags,
             remindAt: _remindAt);
       } else {
-        await widget.api.updateMemo(widget.token,
+        await widget.session.api.updateMemo(widget.session.token,
             id: widget.memo!.id, title: title, body: body,
             categoryId: _categoryId, tags: _tags,
             remindAt: widget.showReminder ? _remindAt : null,
@@ -168,7 +167,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     if (confirmed != true) return;
     setState(() => _busy = true);
     try {
-      await widget.api.deleteMemo(widget.token, id: widget.memo!.id);
+      await widget.session.api.deleteMemo(widget.session.token, id: widget.memo!.id);
       if (mounted) Navigator.of(context).pop();
     } on ApiException {
       if (mounted) {
@@ -430,7 +429,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   }
 
   void _reloadCategories() {
-    setState(() => _categories = widget.api.categories(widget.token));
+    setState(() => _categories = widget.session.api.categories(widget.session.token));
   }
 
   int? _defaultCategoryId(List<Category> categories) {

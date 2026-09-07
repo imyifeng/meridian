@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../session.dart';
 
 /// User management: the console's user pillar (ADR-0001 — every user
 /// after the first is created here). Deleting a user cascades all of their
 /// data server-side, so the confirmation dialog must name the memo count
 /// before the administrator commits.
 class UsersScreen extends StatefulWidget {
-  final MeridianApi api;
-  final String token;
+  final MeridianSession session;
 
-  const UsersScreen({super.key, required this.api, required this.token});
+  const UsersScreen({super.key, required this.session});
 
   @override
   State<UsersScreen> createState() => _UsersScreenState();
@@ -27,7 +27,7 @@ class _UsersScreenState extends State<UsersScreen> {
   @override
   void initState() {
     super.initState();
-    _future = widget.api.users(widget.token);
+    _future = widget.session.api.users(widget.session.token);
   }
 
   @override
@@ -39,7 +39,7 @@ class _UsersScreenState extends State<UsersScreen> {
 
   void _reload() {
     setState(() {
-      _future = widget.api.users(widget.token);
+      _future = widget.session.api.users(widget.session.token);
     });
   }
 
@@ -59,8 +59,8 @@ class _UsersScreenState extends State<UsersScreen> {
       _clearMessages();
     });
     try {
-      await widget.api.createUser(
-        widget.token,
+      await widget.session.api.createUser(
+        widget.session.token,
         username: username,
         password: _password.text,
       );
@@ -81,8 +81,8 @@ class _UsersScreenState extends State<UsersScreen> {
     );
     if (newPassword == null || newPassword.trim().isEmpty) return;
     try {
-      await widget.api.resetPassword(
-        widget.token,
+      await widget.session.api.resetPassword(
+        widget.session.token,
         id: user.id,
         password: newPassword,
       );
@@ -98,7 +98,7 @@ class _UsersScreenState extends State<UsersScreen> {
     // rather than trusting the list the tab loaded with.
     List<User> fresh;
     try {
-      fresh = await widget.api.users(widget.token);
+      fresh = await widget.session.api.users(widget.session.token);
     } on ApiException {
       setState(() => _error = '删除失败，请重试');
       return;
@@ -139,7 +139,7 @@ class _UsersScreenState extends State<UsersScreen> {
     );
     if (confirmed != true) return;
     try {
-      await widget.api.deleteUser(widget.token, id: user.id);
+      await widget.session.api.deleteUser(widget.session.token, id: user.id);
       _reload();
     } on ApiException catch (e) {
       setState(() => _error = _errorText(e, '删除失败，请重试'));

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../session.dart';
 
 /// Category taxonomy management (ADR-0002): the only place in Meridian where
 /// the fixed set of categories can grow or shrink, administrator only. The
@@ -11,16 +12,14 @@ import '../api_client.dart';
 /// A body without its own Scaffold: the console shell owns the AppBar and
 /// the 分类/用户 tabs.
 class CategoriesScreen extends StatefulWidget {
-  final MeridianApi api;
-  final String token;
+  final MeridianSession session;
 
   /// False for non-administrator users: read-only view.
   final bool canManage;
 
   const CategoriesScreen({
     super.key,
-    required this.api,
-    required this.token,
+    required this.session,
     required this.canManage,
   });
 
@@ -37,7 +36,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   @override
   void initState() {
     super.initState();
-    _future = widget.api.categories(widget.token);
+    _future = widget.session.api.categories(widget.session.token);
   }
 
   @override
@@ -48,7 +47,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
 
   void _reload() {
     setState(() {
-      _future = widget.api.categories(widget.token);
+      _future = widget.session.api.categories(widget.session.token);
     });
   }
 
@@ -63,7 +62,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       _error = null;
     });
     try {
-      await widget.api.createCategory(widget.token, name: name);
+      await widget.session.api.createCategory(widget.session.token, name: name);
       _name.clear();
       _reload();
     } on ApiException catch (e) {
@@ -82,7 +81,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   Future<void> _delete(Category category) async {
     setState(() => _error = null);
     try {
-      await widget.api.deleteCategory(widget.token, id: category.id);
+      await widget.session.api.deleteCategory(widget.session.token, id: category.id);
       _reload();
     } on ApiException catch (e) {
       setState(() {
