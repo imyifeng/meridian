@@ -396,7 +396,10 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
 
   /// Date first, then time — a future moment only. The picker offers no
   /// yesterday, and a time at or before now is rejected here: a reminder
-  /// set in the past would sit on the memo and silently never fire.
+  /// set in the past would sit on the memo and silently never fire. The
+  /// spec puts no horizon on a reminder; the hundred-year bound only exists
+  /// because the picker widget needs a lastDate to build its year grid —
+  /// it is a component constraint, not a business rule.
   DateTime get _now => (widget.now ?? DateTime.now)();
 
   Future<void> _pickReminder() async {
@@ -407,7 +410,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       context: context,
       initialDate: initial,
       firstDate: now,
-      lastDate: now.add(const Duration(days: 366)),
+      lastDate: now.add(const Duration(days: 100 * 365)),
       helpText: '选择提醒日期',
     );
     if (!mounted || date == null) return;
