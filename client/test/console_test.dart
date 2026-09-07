@@ -24,6 +24,59 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('Console 登录页不提供服务器地址输入', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('admin', 'correct horse');
+
+    await tester.pumpWidget(
+      ConsoleApp(api: MeridianApi(baseUrl: fake.url, client: fake.client)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('username_field')), findsOneWidget);
+    expect(find.byKey(const Key('password_field')), findsOneWidget);
+    expect(find.byKey(const Key('console_login_button')), findsOneWidget);
+    // The console is served by the instance itself: there is no address to
+    // type, so the shared form must not offer one.
+    expect(find.byKey(const Key('server_address_field')), findsNothing);
+  });
+
+  testWidgets('Console 密码错误的提示与客户端一致', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('admin', 'correct horse');
+
+    await tester.pumpWidget(
+      ConsoleApp(api: MeridianApi(baseUrl: fake.url, client: fake.client)),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('username_field')), 'admin');
+    await tester.enterText(find.byKey(const Key('password_field')), 'wrong');
+    await tester.tap(find.byKey(const Key('console_login_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('用户名或密码错误'), findsOneWidget);
+    expect(find.byKey(const Key('console_login_button')), findsOneWidget);
+  });
+
+  testWidgets('Console 断连的提示与客户端一致', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('admin', 'correct horse');
+    fake.offline = true; // the instance is unreachable when signing in
+
+    await tester.pumpWidget(
+      ConsoleApp(api: MeridianApi(baseUrl: fake.url, client: fake.client)),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('username_field')), 'admin');
+    await tester.enterText(
+        find.byKey(const Key('password_field')), 'correct horse');
+    await tester.tap(find.byKey(const Key('console_login_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('无法连接服务器，请检查服务器地址'), findsOneWidget);
+    expect(find.byKey(const Key('console_login_button')), findsOneWidget);
+  });
+
   testWidgets('管理员登录控制台，新增并删除分类', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('admin', 'correct horse');

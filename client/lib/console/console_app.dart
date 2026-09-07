@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../screens/credentials_form.dart';
 import '../session.dart';
 import 'categories_screen.dart';
 import 'users_screen.dart';
@@ -22,10 +23,10 @@ class ConsoleApp extends StatefulWidget {
 
 class _ConsoleAppState extends State<ConsoleApp> {
   late final MeridianApi _api;
-  final _username = TextEditingController();
-  final _password = TextEditingController();
-  bool _busy = false;
-  String? _error;
+
+  /// Required by CredentialsForm's API though the same-origin console never
+  /// shows the field it backs.
+  final _serverAddress = TextEditingController();
   Session? _session;
 
   @override
@@ -36,30 +37,8 @@ class _ConsoleAppState extends State<ConsoleApp> {
 
   @override
   void dispose() {
-    _username.dispose();
-    _password.dispose();
+    _serverAddress.dispose();
     super.dispose();
-  }
-
-  Future<void> _signIn() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final session = await _api.login(_username.text.trim(), _password.text);
-      setState(() => _session = session);
-    } on ApiException catch (e) {
-      setState(() {
-        _error = switch (e.statusCode) {
-          401 => '用户名或密码错误',
-          0 => '无法连接服务器',
-          _ => '登录失败，请重试',
-        };
-      });
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   void _signOut() {
@@ -78,43 +57,16 @@ class _ConsoleAppState extends State<ConsoleApp> {
   Widget _loginScaffold() {
     return Scaffold(
       appBar: AppBar(title: const Text('Meridian 管理控制台')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: _username,
-                  key: const Key('username_field'),
-                  decoration: const InputDecoration(labelText: '用户名'),
-                  enabled: !_busy,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  key: const Key('password_field'),
-                  decoration: const InputDecoration(labelText: '密码'),
-                  obscureText: true,
-                  enabled: !_busy,
-                ),
-                const SizedBox(height: 24),
-                FilledButton(
-                  key: const Key('console_login_button'),
-                  onPressed: _busy ? null : _signIn,
-                  child: const Text('登录'),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                ],
-              ],
-            ),
-          ),
-        ),
+      body: CredentialsForm(
+        serverAddress: _serverAddress,
+        showServerAddress: false, // the instance is whatever serves this page
+        submitLabel: '登录',
+        buttonKey: 'console_login_button',
+        onSubmit: (username, password) async {
+          final session = await _api.login(username, password);
+          setState(() => _session = session);
+        },
+        onError: loginErrorMessage,
       ),
     );
   }
