@@ -60,14 +60,14 @@ void main() {
     return notifications;
   }
 
-  // Drives the real date and time pickers: today, at [hour]:[minute].
-  // Finders stay scoped to the dialogs — the editor underneath has TextFields
-  // of its own.
+  // Drives the real date and time pickers: [day] in the month the picker
+  // is showing, at [hour]:[minute]. Finders stay scoped to the dialogs —
+  // the editor underneath has TextFields of its own.
   Future<void> drivePickers(WidgetTester tester,
-      {required String hour, required String minute}) async {
+      {required String day, required String hour, required String minute}) async {
     await tester.tap(find.descendant(
       of: find.byType(CalendarDatePicker),
-      matching: find.text('${DateTime.now().day}'),
+      matching: find.text(day),
     ));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -94,15 +94,18 @@ void main() {
   }
 
   Future<void> pickReminder(WidgetTester tester,
-      {String hour = '08', String minute = '30'}) async {
+      {required String day, String hour = '08', String minute = '30'}) async {
     await tester.tap(find.byKey(const Key('set_reminder_button')));
     await tester.pumpAndSettle();
-    await drivePickers(tester, hour: hour, minute: minute);
+    await drivePickers(tester, day: day, hour: hour, minute: minute);
   }
 
-  String two(int n) => n.toString().padLeft(2, '0');
-  final today0830 =
-      '${DateTime.now().year}-${two(DateTime.now().month)}-${two(DateTime.now().day)} 08:30';
+  // The fixed clock the editor tests inject (the editor judges the picked
+  // reminder against it) and the reminder it makes pickable: the picker
+  // always shows January 2026, so these assertions hold at any hour of any
+  // day — 08:30 on the real wall clock made them fail every afternoon.
+  final editorNow = DateTime(2026, 1, 1, 10);
+  final pickedReminder = '2026-01-15 08:30';
 
   String? valueText(WidgetTester tester) =>
       tester.widget<Text>(find.byKey(const Key('reminder_value'))).data;
@@ -110,13 +113,13 @@ void main() {
   testWidgets('设置提醒：保存后可见，重开编辑器同一提醒', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
-    await loginAsYifeng(tester, fake);
+    await loginAsYifeng(tester, fake, now: () => editorNow);
 
     await tester.tap(find.byKey(const Key('new_memo_button')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('title_field')), '交房租');
-    await pickReminder(tester);
-    expect(valueText(tester), today0830);
+    await pickReminder(tester, day: '15');
+    expect(valueText(tester), pickedReminder);
     await tester.tap(find.byKey(const Key('save_button')));
     await tester.pumpAndSettle();
 
@@ -126,18 +129,18 @@ void main() {
     // Reopening shows the same reminder — it lives on the memo.
     await tester.tap(find.text('交房租'));
     await tester.pumpAndSettle();
-    expect(valueText(tester), today0830);
+    expect(valueText(tester), pickedReminder);
   });
 
   testWidgets('修改与取消提醒：保存后服务器上是新状态', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
-    await loginAsYifeng(tester, fake);
+    await loginAsYifeng(tester, fake, now: () => editorNow);
 
     await tester.tap(find.byKey(const Key('new_memo_button')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('title_field')), '交房租');
-    await pickReminder(tester);
+    await pickReminder(tester, day: '15');
     await tester.tap(find.byKey(const Key('save_button')));
     await tester.pumpAndSettle();
 
@@ -145,9 +148,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('change_reminder_button')));
     await tester.pumpAndSettle();
-    await drivePickers(tester, hour: '09', minute: '45');
-    expect(valueText(tester),
-        '${today0830.substring(0, 11)}09:45');
+    await drivePickers(tester, day: '15', hour: '09', minute: '45');
+    expect(valueText(tester), '2026-01-15 09:45');
     await tester.tap(find.byKey(const Key('save_button')));
     await tester.pumpAndSettle();
     final changed = fake.remindAtOf('交房租')!;
