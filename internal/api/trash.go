@@ -17,10 +17,7 @@ func (s *server) listTrash(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if memos == nil {
-		memos = []store.Memo{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"memos": memos})
+	writeJSON(w, http.StatusOK, map[string]any{"memos": nonNil(memos)})
 }
 
 func (s *server) restoreMemo(w http.ResponseWriter, r *http.Request) {

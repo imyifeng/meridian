@@ -19,10 +19,7 @@ func (s *server) listUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	if users == nil {
-		users = []store.UserSummary{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+	writeJSON(w, http.StatusOK, map[string]any{"users": nonNil(users)})
 }
 
 type userInput struct {
@@ -37,12 +34,19 @@ func validPassword(password string) bool {
 	return strings.TrimSpace(password) != "" && len(password) <= store.MaxPasswordBytes
 }
 
+// validCredentials applies the same rules to a username + password pair
+// wherever credentials enter the system: the setup wizard and user creation
+// share it so their checks cannot drift apart again.
+func validCredentials(username, password string) bool {
+	return strings.TrimSpace(username) != "" && validPassword(password)
+}
+
 func (s *server) createUser(w http.ResponseWriter, r *http.Request) {
 	var in userInput
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	if strings.TrimSpace(in.Username) == "" || !validPassword(in.Password) {
+	if !validCredentials(in.Username, in.Password) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}

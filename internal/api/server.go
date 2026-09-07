@@ -97,6 +97,15 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
+// nonNil normalizes a nil slice to an empty one so list responses always
+// encode as [], never null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 // decodeBody parses a JSON request body into out; anything other than a
 // well-formed JSON object is a 400.
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
