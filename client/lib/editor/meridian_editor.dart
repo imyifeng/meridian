@@ -364,6 +364,47 @@ class MeridianEditorController {
   }
 }
 
+/// The document surface's stylesheet, derived from the ambient MD3 color
+/// scheme (ADR-0007): super_editor's default stylesheet hardcodes black body
+/// text, grey headings and a fixed quote color, which turns unreadable in
+/// dark mode. Spacing and type scale stay the defaults — only colors follow
+/// the theme.
+Stylesheet _themedDocumentStylesheet(ColorScheme scheme) {
+  TextStyle recolorInline(Set<Attribution> attributions, TextStyle style) {
+    final styled = defaultInlineTextStyler(attributions, style);
+    // The default styler paints links a fixed light blue; repaint them in
+    // the brand primary so they read in both modes.
+    if (styled.color == Colors.lightBlue &&
+        attributions.any((a) => a is LinkAttribution)) {
+      return styled.copyWith(color: scheme.primary);
+    }
+    return styled;
+  }
+
+  return defaultStylesheet.copyWith(
+    inlineTextStyler: recolorInline,
+    addRulesAfter: [
+      // Later rules win, so these recolor the defaults in place.
+      StyleRule(
+        BlockSelector.all,
+        (doc, node) => {Styles.textStyle: TextStyle(color: scheme.onSurface)},
+      ),
+      for (final header in const ['header1', 'header2', 'header3'])
+        StyleRule(
+          BlockSelector(header),
+          (doc, node) =>
+              {Styles.textStyle: TextStyle(color: scheme.onSurface)},
+        ),
+      StyleRule(
+        const BlockSelector('blockquote'),
+        (doc, node) => {
+          Styles.textStyle: TextStyle(color: scheme.onSurfaceVariant),
+        },
+      ),
+    ],
+  );
+}
+
 /// The editable WYSIWYG body: a fixed toolbar applying the v1 format set
 /// plus the document surface. Formats are applied to the current selection;
 /// the buttons never steal the focus from the document.
@@ -378,6 +419,17 @@ class MeridianEditor extends StatefulWidget {
 
 class _MeridianEditorState extends State<MeridianEditor> {
   MeridianEditorController get _controller => widget.controller;
+
+  // Rebuilt only when the ambient theme changes (didChangeDependencies), so
+  // ordinary rebuilds never hand SuperEditor a fresh stylesheet.
+  Stylesheet? _documentStylesheet;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _documentStylesheet =
+        _themedDocumentStylesheet(Theme.of(context).colorScheme);
+  }
 
   // Stable across builds: SuperEditor ref-counts plugin attachments per
   // instance, so a fresh set literal on every build breaks its dispose.
@@ -399,6 +451,7 @@ class _MeridianEditorState extends State<MeridianEditor> {
         Expanded(
           child: SuperEditor(
             editor: _controller.editor,
+            stylesheet: _documentStylesheet,
             // Mouse-style gestures everywhere: taps and drags edit the
             // document like on a desktop, without the mobile floating
             // selection menu crowding the fixed toolbar.
@@ -582,6 +635,8 @@ class MeridianDocumentReader extends StatelessWidget {
   Widget build(BuildContext context) {
     return SuperReader(
       editor: controller.editor,
+      stylesheet:
+          _themedDocumentStylesheet(Theme.of(context).colorScheme),
       componentBuilders: [
         const MarkdownTableComponentBuilder(),
         ...readOnlyDefaultComponentBuilders,

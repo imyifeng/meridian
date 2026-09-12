@@ -1,0 +1,3 @@
+# 前端统一 Material Design 3 设计系统，深色模式仅跟随系统
+
+四个前端面（Windows / Android 客户端、Web 简易客户端、Web 管理控制台）统一按 MD3 设计系统落地：深浅两套色板均由品牌种子色（teal）经 `ColorScheme.fromSeed` 生成，字体、圆角与组件主题收敛到共享主题定义（`client/lib/theme.dart`，全库唯一的 `ThemeData` 构造点，两处 `MaterialApp` 都挂它派生的 `theme`/`darkTheme`）。组件主题只覆盖实际上屏的组件（应用栏、输入框、FAB 等），未上屏的不定义、其余沿用框架的 MD3 默认；字体保持平台默认，不为中文 UI 捆绑字体资产。Web 端内嵌的 super_editor 默认样式表硬编码黑字，文档正文的文字颜色由共享色板派生。深色模式只跟随系统（`ThemeMode.system`，Web 端即响应浏览器的 `prefers-color-scheme`），不设应用内浅色/深色/跟随系统三态开关，界面偏好不入账号数据模型。Android 不启用 Material You 动态取色——`dynamic_color` 仅 Android 支持，启用会让四端视觉不一致，与"一次开发、四端一致"相悖。接受的代价：Android 用户拿不到壁纸取色的个性化配色，想手动切深浅色的用户只能去改系统设置；若未来需要开关或动态取色，属增量演进，不改变本决定的前提。
