@@ -9,6 +9,7 @@ import 'screens/memos_screen.dart';
 import 'screens/setup_screen.dart';
 import 'server_address_store.dart';
 import 'session.dart';
+import 'theme.dart';
 import 'token_store.dart';
 
 enum AppState { loading, setup, login, memos }
@@ -185,9 +186,13 @@ class _MeridianAppState extends State<MeridianApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Dark mode follows the system only (ADR-0007): both palettes come from
+    // the shared MD3 theme file, keyed to the platform's brightness.
     return MaterialApp(
       title: 'Meridian',
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      theme: meridianLightTheme,
+      darkTheme: meridianDarkTheme,
+      themeMode: ThemeMode.system,
       home: switch (_state) {
         AppState.loading => const Scaffold(
             body: Center(child: CircularProgressIndicator()),

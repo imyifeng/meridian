@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../screens/credentials_form.dart';
 import '../session.dart';
+import '../theme.dart';
 import 'categories_screen.dart';
 import 'users_screen.dart';
 
@@ -47,9 +48,13 @@ class _ConsoleAppState extends State<ConsoleApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Dark mode follows the system only (ADR-0007): both palettes come from
+    // the shared MD3 theme file, keyed to the browser's prefers-color-scheme.
     return MaterialApp(
       title: 'Meridian 管理控制台',
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      theme: meridianLightTheme,
+      darkTheme: meridianDarkTheme,
+      themeMode: ThemeMode.system,
       home: _session == null ? _loginScaffold() : _consoleScaffold(),
     );
   }
