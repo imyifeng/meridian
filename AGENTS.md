@@ -29,5 +29,5 @@ One ticket per session: claim → branch → implement → review & merge → cl
 - [ ] PR squash-merged and branch deleted
 - [ ] Ticket commented and closed
 - [ ] Every background process started this session (dev server, local instance, watcher) stopped
-- [ ] Containers torn down (`podman compose down -v`); containers appear only in compose deployment verification work
+- [ ] Containers torn down (`docker compose down -v`); containers appear only in compose deployment verification work
 - [ ] `git status` clean — nothing uncommitted, nothing untracked
