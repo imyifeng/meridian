@@ -1,4 +1,4 @@
-# Meridian trial deployment image (T11): `podman compose up -d --build`
+# Meridian trial deployment image (T11): `docker compose up -d --build`
 # builds everything from source — the two Flutter Web SPAs the binary
 # embeds, then the static Go server — and the resulting image runs the
 # instance with its data on a volume.
