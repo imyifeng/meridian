@@ -202,7 +202,14 @@ void main() {
   testWidgets('退出登录清除本地缓存，断网重启进入登录页而非显示旧内容', (tester) async {
     final (fake, tokens, cache) = await loginAndCacheOneMemo(tester);
 
-    await tester.tap(find.byIcon(Icons.logout));
+    // The sign-out entry lives on the 我的 page since the nav shell (#71).
+    // Scoped to the bar: the IndexedStack keeps every tab mounted, so the
+    // page title repeats the label.
+    await tester.tap(find.descendant(
+        of: find.byKey(const Key('nav_bar')),
+        matching: find.text('我的')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sign_out_button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('login_button')), findsOneWidget);
 

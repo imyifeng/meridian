@@ -3,15 +3,30 @@
 // 简易客户端 (app.dart) and by the Web 管理控制台 (console_app.dart).
 //
 // Light and dark palettes both derive from the brand seed via
-// ColorScheme.fromSeed; dark mode is applied by the system only
-// (ThemeMode.system on both MaterialApps — on the web that is the browser's
-// prefers-color-scheme). There is no in-app theme switch, and
+// ColorScheme.fromSeed. Dark mode follows the system by default
+// (ThemeMode.system — on the web that is the browser's
+// prefers-color-scheme); since ADR-0010 the Windows/Android 客户端's 我的
+// page also offers the three-state in-app switch (深色/浅色/跟随系统,
+// stored
+// client-locally via theme_mode_store.dart, never in account data), while
+// the Web 简易客户端 and the Console keep following the system.
 // dynamic_color is deliberately unused: it is Android-only and would break
 // the four-frontends-one-look rule. Component themes below cover only the
-// components the screens actually use; everything else keeps the framework's
-// own MD3 defaults.
+// components the screens actually use; everything else keeps the
+// framework's own MD3 defaults.
 
 import 'package:flutter/material.dart';
+
+/// The stored theme preference's three states, parsed from the name the
+/// store persists ([ThemeMode.name]). Anything absent or unrecognized — a
+/// fresh install, a garbled entry — falls back to following the system,
+/// the ADR-0007/0010 default. Parsing lives here so the theme definition
+/// keeps its single source.
+ThemeMode themeModeFromName(String? name) => switch (name) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
 
 /// Brand seed color: teal — what every frontend has always shipped with.
 const Color kSeedColor = Colors.teal;

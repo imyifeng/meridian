@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'identity_store.dart';
 import 'memo_cache.dart';
 import 'reminders_plugin.dart';
 import 'server_address_store.dart';
+import 'theme_mode_store.dart';
 import 'token_store.dart';
 
 void main() {
@@ -16,6 +18,11 @@ void main() {
     tokenStore: SecureTokenStore(),
     memoCache: SecureMemoCache(),
     addressStore: SecureServerAddressStore(),
+    identityStore: SecureIdentityStore(),
+    // The theme three-state switch lives on the 我的 page (ADR-0010); only
+    // the Windows/Android 客户端 gets a store, so only here is the
+    // preference settable and persistent.
+    themeModeStore: SecureThemeModeStore(),
     reminderNotifications: createReminderNotifications(),
   ));
 }

@@ -38,6 +38,11 @@ class MemosScreen extends StatefulWidget {
   /// editing entry — there, reminders are a 客户端 feature.
   final bool showReminder;
 
+  /// False inside the Windows/Android 客户端's navigation shell (#71),
+  /// where sign-out lives on the 我的 page alone. The Web 简易客户端 has
+  /// no 我的 page and keeps its app-bar logout.
+  final bool showLogout;
+
   final VoidCallback onSignOut;
 
   const MemosScreen({
@@ -48,6 +53,7 @@ class MemosScreen extends StatefulWidget {
     this.reminderNotifications,
     this.reminderNow,
     this.showReminder = true,
+    this.showLogout = true,
     required this.onSignOut,
   });
 
@@ -379,7 +385,13 @@ class _MemosScreenState extends State<MemosScreen> {
             // The recycle bin is server data, and its actions are writes.
             onPressed: _loader.offline ? null : _openTrash,
           ),
-          IconButton(icon: const Icon(Icons.logout), tooltip: '退出登录', onPressed: widget.onSignOut),
+          if (widget.showLogout)
+            IconButton(
+              key: const Key('logout_button'),
+              icon: const Icon(Icons.logout),
+              tooltip: '退出登录',
+              onPressed: widget.onSignOut,
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
