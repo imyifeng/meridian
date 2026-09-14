@@ -87,6 +87,44 @@ func TestChatStreaming(t *testing.T) {
 	}
 }
 
+// OnDelta is the streaming outlet: each increment reaches the caller as it
+// arrives, so the agent can relay the reply onward mid-stream (ADR-0009)
+// while Chat still assembles the full text.
+func TestChatOnDelta(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, payload := range []string{
+			`{"choices":[{"delta":{"content":"你"}}]}`,
+			`{"choices":[{"delta":{"content":"好"}}]}`,
+			`[DONE]`,
+		} {
+			fmt.Fprintf(w, "data: %s\n\n", payload)
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	var deltas []string
+	got, err := newClient(srv).Chat(context.Background(), llm.ChatRequest{
+		Model:    "meridian-mini",
+		Messages: []llm.Message{{Role: "user", Content: "连接测试，请回复 OK"}},
+		OnDelta:  func(delta string) { deltas = append(deltas, delta) },
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if got != "你好" {
+		t.Errorf("Chat = %q, want 你好", got)
+	}
+	if strings.Join(deltas, "") != "你好" {
+		t.Errorf("deltas %q, want them to concatenate to 你好", deltas)
+	}
+	if len(deltas) < 2 {
+		t.Errorf("deltas arrived as one lump %q, want increments", deltas)
+	}
+}
+
 func TestChatStatusError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

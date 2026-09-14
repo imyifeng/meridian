@@ -180,6 +180,27 @@ var migrations = []string{
 		enabled  INTEGER NOT NULL DEFAULT 0
 	);
 	INSERT INTO ai_settings (id) VALUES (1);`,
+	// T74: the agent conversation. One conversation per user (the glossary's
+	// Conversation), created on first use; messages are the persistent
+	// display record and nothing else. awaiting_input marks the task
+	// boundary on the assistant message that declared it: the still-open
+	// task (ADR-0009) is everything after the last awaiting_input=0
+	// assistant message. No tool-roundtrip columns yet — #75 extends the
+	// schema when tools arrive.
+	`CREATE TABLE conversations (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	CREATE TABLE messages (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		role            TEXT NOT NULL,
+		content         TEXT NOT NULL,
+		awaiting_input  INTEGER NOT NULL DEFAULT 0,
+		created_at      TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate() error {
