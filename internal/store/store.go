@@ -167,6 +167,19 @@ var migrations = []string{
 	// and writes it back through the update API. The rule rides the memo
 	// row like remind_at does (ADR-0004).
 	`ALTER TABLE memos ADD COLUMN remind_rule TEXT NOT NULL DEFAULT '';`,
+	// T73: AI Settings (ADR-0009) — the instance's single LLM access
+	// configuration, one row like instance_state. The API key lives here in
+	// plaintext (the instance database is the trust boundary) and is masked
+	// by the API layer on every read. The seeded row starts empty and off:
+	// the agent is unavailable until an administrator configures it.
+	`CREATE TABLE ai_settings (
+		id       INTEGER PRIMARY KEY CHECK (id = 1),
+		base_url TEXT NOT NULL DEFAULT '',
+		model    TEXT NOT NULL DEFAULT '',
+		api_key  TEXT NOT NULL DEFAULT '',
+		enabled  INTEGER NOT NULL DEFAULT 0
+	);
+	INSERT INTO ai_settings (id) VALUES (1);`,
 }
 
 func (s *Store) migrate() error {

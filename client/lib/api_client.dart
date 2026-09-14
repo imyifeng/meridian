@@ -130,6 +130,30 @@ class MeridianApi {
     await _request('DELETE', '/api/v1/users/$id', token: token);
   }
 
+  /// The instance's AI 设置 (ADR-0009), administrators only. apiKey in the
+  /// response is the server's mask, never the stored plaintext.
+  Future<AISettings> aiSettings(String token) async {
+    final body = await _request('GET', '/api/v1/ai/settings', token: token);
+    return AISettings.fromJson(body);
+  }
+
+  /// Saves the AI 设置. input.apiKey null or empty keeps the stored key —
+  /// the key only travels when the administrator typed a new one. Answers
+  /// with the saved settings, key masked.
+  Future<AISettings> saveAISettings(String token, AISettingsInput input) async {
+    final data = await _request('PUT', '/api/v1/ai/settings', token: token,
+        body: input.toJson());
+    return AISettings.fromJson(data);
+  }
+
+  /// Asks the server to dial the saved configuration with one minimal
+  /// request; (success, reason) comes back either way — the reason text is
+  /// meant to be shown as-is.
+  Future<(bool, String?)> testAISettings(String token) async {
+    final body = await _request('POST', '/api/v1/ai/settings/test', token: token);
+    return (body['success'] as bool? ?? false, body['reason'] as String?);
+  }
+
   /// The signed-in user's own tag names — the autocomplete data source
   /// (T4). Tags never cross users.
   Future<List<String>> tags(String token) async {
@@ -280,6 +304,53 @@ class User {
         'username': username,
         'role': role,
       };
+}
+
+/// A save instruction for the AI 设置 (ADR-0009): the non-secret fields go
+/// over wholesale. apiKey null or empty keeps the stored key — the field is
+/// only populated when the administrator typed a new one.
+class AISettingsInput {
+  final String baseUrl;
+  final String model;
+  final bool enabled;
+  final String? apiKey;
+
+  AISettingsInput({
+    required this.baseUrl,
+    required this.model,
+    required this.enabled,
+    this.apiKey,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'base_url': baseUrl,
+        'model': model,
+        'enabled': enabled,
+        if (apiKey != null && apiKey!.isNotEmpty) 'api_key': apiKey,
+      };
+}
+
+/// The instance's AI 设置 as the server reports it (ADR-0009): apiKey is
+/// the mask — identifying, not usable. Empty mask means no key is stored.
+class AISettings {
+  final String baseUrl;
+  final String model;
+  final String apiKey;
+  final bool enabled;
+
+  AISettings({
+    required this.baseUrl,
+    required this.model,
+    required this.apiKey,
+    required this.enabled,
+  });
+
+  factory AISettings.fromJson(Map<String, dynamic> json) => AISettings(
+        baseUrl: json['base_url'] as String? ?? '',
+        model: json['model'] as String? ?? '',
+        apiKey: json['api_key'] as String? ?? '',
+        enabled: json['enabled'] as bool? ?? false,
+      );
 }
 
 class Category {

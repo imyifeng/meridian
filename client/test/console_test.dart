@@ -24,6 +24,13 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// TabBarView 页面切换带动画，AI 设置页还要等加载 future 落定；
+  /// future 完成后没有仍在跑的动画，pumpAndSettle 会停下来。
+  Future<void> switchToAISettings(WidgetTester tester) async {
+    await tester.tap(find.text('AI 设置'));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('Console 登录页不提供服务器地址输入', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('admin', 'correct horse');
@@ -272,5 +279,100 @@ void main() {
       find.byKey(Key('delete_user_${fake.userByName('bob')['id']}')),
       findsOneWidget,
     );
+  });
+
+  group('AI 设置', () {
+    testWidgets('管理员打开 AI 设置，已存配置回显，保存生效', (tester) async {
+      final fake = FakeMeridianServer();
+      fake.registerUser('admin', 'correct horse');
+      fake.aiSettings = {
+        'base_url': 'https://llm.example.com/v1',
+        'model': 'meridian-mini',
+        'api_key': 'sk-existing-abcd1234',
+        'enabled': true,
+      };
+
+      await signInAs(tester, fake);
+      await switchToAISettings(tester);
+
+      // 已存的非密字段回显；key 只以掩码出现。
+      String text(String fieldKey) => tester
+          .widget<TextField>(find.byKey(Key(fieldKey)))
+          .controller!
+          .text;
+      expect(text('ai_base_url_field'), 'https://llm.example.com/v1');
+      expect(text('ai_model_field'), 'meridian-mini');
+      expect(text('ai_api_key_field'), isEmpty);
+      expect(find.textContaining('sk-…1234'), findsOneWidget);
+
+      // 修改模型名与开关，key 留空——留空即保留既存。
+      await tester.enterText(
+          find.byKey(const Key('ai_model_field')), 'meridian-max');
+      await tester.tap(find.byKey(const Key('ai_enabled_switch')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('ai_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fake.aiSettings['model'], 'meridian-max');
+      expect(fake.aiSettings['enabled'], isFalse);
+      // 明文 key 原样保留，没有被打成空。
+      expect(fake.aiSettings['api_key'], 'sk-existing-abcd1234');
+      expect(find.text('已保存'), findsOneWidget);
+    });
+
+    testWidgets('管理员填入新 API Key，保存后覆盖既存', (tester) async {
+      final fake = FakeMeridianServer();
+      fake.registerUser('admin', 'correct horse');
+      fake.aiSettings['api_key'] = 'sk-old-key-1111';
+
+      await signInAs(tester, fake);
+      await switchToAISettings(tester);
+      await tester.enterText(
+          find.byKey(const Key('ai_api_key_field')), 'sk-new-key-2222');
+      await tester.tap(find.byKey(const Key('ai_save_button')));
+      await tester.pumpAndSettle();
+
+      expect(fake.aiSettings['api_key'], 'sk-new-key-2222');
+    });
+
+    testWidgets('测试连接：成功与失败都有结果反馈', (tester) async {
+      final fake = FakeMeridianServer();
+      fake.registerUser('admin', 'correct horse');
+
+      await signInAs(tester, fake);
+      await switchToAISettings(tester);
+
+      fake.aiTestResult = {'success': true};
+      await tester.tap(find.byKey(const Key('ai_test_button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ai_test_result')), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ai_test_result'))).data,
+        '连接成功',
+      );
+      expect(fake.aiTestCalls, 1);
+
+      fake.aiTestResult = {
+        'success': false,
+        'reason': '无法连接模型服务：connection refused',
+      };
+      await tester.tap(find.byKey(const Key('ai_test_button')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ai_test_result'))).data,
+        '无法连接模型服务：connection refused',
+      );
+    });
+
+    testWidgets('非管理员没有 AI 设置入口', (tester) async {
+      final fake = FakeMeridianServer();
+      fake.registerUser('bob', 'bob password', role: 'user');
+
+      await signInAs(tester, fake, username: 'bob', password: 'bob password');
+
+      expect(find.text('AI 设置'), findsNothing);
+      // 用户管理也不在：非管理员的控制台只有分类体系。
+      expect(find.text('用户管理'), findsNothing);
+    });
   });
 }
