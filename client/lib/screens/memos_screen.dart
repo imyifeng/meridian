@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
-import '../editor/meridian_editor.dart';
 import '../memo_cache.dart';
 import '../memo_filters.dart';
 import '../memo_list_loader.dart';
@@ -449,11 +448,9 @@ class _MemosScreenState extends State<MemosScreen> {
       itemCount: memos.length,
       itemBuilder: (context, i) {
         final memo = memos[i];
-        // The preview shows the rendered text, never the Markdown source
-        // (ADR-0006): the same parse the editor and reader run, collapsed
-        // to one paragraph; the row clips it to one line.
-        final preview =
-            memo.body.isEmpty ? '' : markdownPlainText(memo.body);
+        // The preview is the plain-text body itself (ADR-0008), clipped to
+        // one line by the row — no conversion of any kind.
+        final preview = memo.body;
         return ListTile(
           title: Text(memo.title),
           subtitle: preview.isEmpty

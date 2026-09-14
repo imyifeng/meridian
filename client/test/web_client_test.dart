@@ -1,71 +1,46 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:super_editor/super_editor.dart';
-import 'package:super_editor/super_editor_test.dart';
 
 import 'package:meridian/app.dart';
-import 'package:meridian/editor/meridian_editor.dart';
 import 'package:meridian/token_store.dart';
 
 import 'fake_meridian_server.dart';
+import 'login_harness.dart';
+
+// The Web 简易客户端 app as it ships (T10): same-origin base URL,
+// browser-session stores, no notification surface.
+MeridianApp webClientApp(FakeMeridianServer fake) => MeridianApp(
+      baseUrl: '', // same origin: the server hosts this build at /web/
+      tokenStore: InMemoryTokenStore(),
+      apiClient: fake.client,
+      webClient: true,
+    );
 
 void main() {
-  // Boots the app the way the Web 简易客户端 ships (T10): same-origin base
-  // URL, browser-session stores, no notification surface.
-  Future<void> bootWebClient(
-      WidgetTester tester, FakeMeridianServer fake) async {
-    await tester.pumpWidget(
-      MeridianApp(
-        baseUrl: '', // same origin: the server hosts this build at /web/
-        tokenStore: InMemoryTokenStore(),
-        apiClient: fake.client,
-        webClient: true,
-      ),
-    );
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> loginAs(
-      WidgetTester tester, String username, String password) async {
-    await tester.enterText(find.byKey(const Key('username_field')), username);
-    await tester.enterText(find.byKey(const Key('password_field')), password);
-    await tester.tap(find.byKey(const Key('login_button')));
-    await tester.pumpAndSettle();
-  }
-
   // Opens the editor for the memo titled [title] from the list.
   Future<void> openMemo(WidgetTester tester, String title) async {
     await tester.tap(find.text(title));
     await tester.pumpAndSettle();
   }
 
-  testWidgets('登录后可查看备忘录列表与正文，Markdown 渲染正确', (tester) async {
+  testWidgets('登录后可查看备忘录列表与正文，正文按字面显示', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
-    fake.seedMemo('yifeng', '会议记录',
-        body: '# 结论\n\n**重要**：周五上线', tags: ['工作']);
+    const body = '# 结论\n**重要**：周五上线';
+    fake.seedMemo('yifeng', '会议记录', body: body, tags: ['工作']);
 
-    await bootWebClient(tester, fake);
-    await loginAs(tester, 'yifeng', 'correct horse');
+    await pumpAndLogin(tester, webClientApp(fake), 'yifeng', 'correct horse');
 
     expect(find.text('会议记录'), findsOneWidget);
     await openMemo(tester, '会议记录');
 
-    // The Markdown body arrives rendered: '# ' became a heading, the bold
-    // run is styled, and no syntax symbol survives as text.
-    final editor = tester
-        .widget<MeridianEditor>(find.byKey(const Key('body_editor')))
-        .controller;
-    final h1 = editor.document.getNodeAt(0) as ParagraphNode;
-    expect((h1.getMetadataValue('blockType') as Attribution?)?.id,
-        header1Attribution.id);
-    expect(h1.text.toPlainText(), '结论');
-    final para = editor.document.getNodeAt(1) as ParagraphNode;
-    expect(para.text.toPlainText(), '重要：周五上线');
-    expect(para.text.spans.getAllAttributionsAt(0).map((a) => a.id),
-        contains('bold'));
+    // The body is plain text (ADR-0008): the editor field holds it verbatim,
+    // syntax symbols included — nothing is rendered or converted.
+    final bodyField =
+        tester.widget<TextField>(find.byKey(const Key('body_editor')));
+    expect(bodyField.controller!.text, body);
 
-    // Tags show as chips, verbatim — never as Markdown.
+    // Tags show as chips, verbatim.
     expect(find.byKey(const Key('tag_chip_工作')), findsOneWidget);
   });
 
@@ -75,8 +50,7 @@ void main() {
     final work = fake.createCategory('工作');
     fake.seedMemo('yifeng', '旧标题', body: '第一段');
 
-    await bootWebClient(tester, fake);
-    await loginAs(tester, 'yifeng', 'correct horse');
+    await pumpAndLogin(tester, webClientApp(fake), 'yifeng', 'correct horse');
     await openMemo(tester, '旧标题');
 
     await tester.enterText(find.byKey(const Key('title_field')), '新标题');
@@ -84,11 +58,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('工作').last);
     await tester.pumpAndSettle();
-    // Append to the body at its end, like a cursor would.
-    await tester.placeCaretInParagraph('n0', 3);
-    await tester.pumpAndSettle();
-    await tester.typeImeText('新增一句');
-    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('body_editor')), '第一段新增一句');
     await tester.enterText(find.byKey(const Key('tag_field')), '英语');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
@@ -110,8 +80,7 @@ void main() {
     final when = DateTime(2027, 3, 1, 9, 30);
     fake.seedMemo('yifeng', '带提醒', body: '正文', remindAt: when);
 
-    await bootWebClient(tester, fake);
-    await loginAs(tester, 'yifeng', 'correct horse');
+    await pumpAndLogin(tester, webClientApp(fake), 'yifeng', 'correct horse');
     await openMemo(tester, '带提醒');
 
     // Reminders are a 客户端 feature: the Web 简易客户端 offers no way to
@@ -132,8 +101,7 @@ void main() {
     fake.registerUser('yifeng', 'correct horse');
     fake.seedMemo('yifeng', '并发备忘', body: '正文');
 
-    await bootWebClient(tester, fake);
-    await loginAs(tester, 'yifeng', 'correct horse');
+    await pumpAndLogin(tester, webClientApp(fake), 'yifeng', 'correct horse');
     await openMemo(tester, '并发备忘');
 
     // While this editor is open, another end sets a reminder — the Web
@@ -155,8 +123,7 @@ void main() {
     fake.seedMemo('yifeng', '并发备忘', body: '正文',
         remindAt: DateTime(2027, 3, 1, 9, 30));
 
-    await bootWebClient(tester, fake);
-    await loginAs(tester, 'yifeng', 'correct horse');
+    await pumpAndLogin(tester, webClientApp(fake), 'yifeng', 'correct horse');
     await openMemo(tester, '并发备忘');
 
     // Another end moves the reminder while this editor holds the old time.
@@ -174,11 +141,12 @@ void main() {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
 
-    await bootWebClient(tester, fake);
+    await tester.pumpWidget(webClientApp(fake));
+    await tester.pumpAndSettle();
 
     // The instance is whatever origin served the page — no address to type.
     expect(find.text('服务器地址'), findsNothing);
-    await loginAs(tester, 'yifeng', 'correct horse');
+    await signIn(tester, 'yifeng', 'correct horse');
     expect(find.text('暂无备忘录'), findsOneWidget);
   });
 
@@ -188,7 +156,8 @@ void main() {
 
     await tester.binding.setSurfaceSize(const Size(1280, 720));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await bootWebClient(tester, fake);
+    await tester.pumpWidget(webClientApp(fake));
+    await tester.pumpAndSettle();
 
     final width = tester.getSize(find.byKey(const Key('username_field'))).width;
     expect(width, lessThanOrEqualTo(360),

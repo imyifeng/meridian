@@ -1,36 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
-import '../editor/meridian_editor.dart';
 import '../reminders.dart';
 
 /// The offline reader (T8): a cached memo opened without a server — title,
-/// tags, and a read-only body. Nothing here writes or fetches; editing only
-/// happens online, in MemoEditScreen.
-class MemoViewScreen extends StatefulWidget {
+/// tags, and the body shown literally (ADR-0008). Nothing here writes or
+/// fetches; editing only happens online, in MemoEditScreen.
+class MemoViewScreen extends StatelessWidget {
   final Memo memo;
 
   const MemoViewScreen({super.key, required this.memo});
 
   @override
-  State<MemoViewScreen> createState() => _MemoViewScreenState();
-}
-
-class _MemoViewScreenState extends State<MemoViewScreen> {
-  // Parses the cached Markdown once; rendered through the read-only
-  // document surface, never through the editor.
-  late final MeridianEditorController _body =
-      MeridianEditorController(widget.memo.body);
-
-  @override
-  void dispose() {
-    _body.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final memo = widget.memo;
     return Scaffold(
       appBar: AppBar(title: const Text('查看备忘录')),
       body: Padding(
@@ -64,10 +46,19 @@ class _MemoViewScreenState extends State<MemoViewScreen> {
               ),
             ],
             const SizedBox(height: 12),
+            // Plain-text body (ADR-0008): rendered verbatim, Markdown
+            // symbols and all. Scrollable so a long body stays reachable
+            // instead of being clipped, inside a SelectionArea so it can
+            // still be copied.
             Expanded(
-              child: MeridianDocumentReader(
-                key: const Key('body_readonly'),
-                controller: _body,
+              child: SelectionArea(
+                child: SingleChildScrollView(
+                  child: Text(
+                    memo.body,
+                    key: const Key('body_readonly'),
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ),
               ),
             ),
           ],

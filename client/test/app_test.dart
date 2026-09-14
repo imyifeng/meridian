@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:super_editor/super_editor_test.dart';
 
 import 'package:meridian/app.dart';
 import 'package:meridian/token_store.dart';
 
 import 'fake_meridian_server.dart';
 
-// Focuses the WYSIWYG body and types into it like a keyboard would.
+// Types into the plain-text body field (ADR-0008) like any other input.
 Future<void> typeBody(WidgetTester tester, String text) async {
-  await tester.tap(find.byKey(const Key('body_editor')));
-  await tester.pumpAndSettle();
-  await tester.typeImeText(text);
+  await tester.enterText(find.byKey(const Key('body_editor')), text);
   await tester.pumpAndSettle();
 }
 
