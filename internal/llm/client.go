@@ -25,6 +25,10 @@ type ChatRequest struct {
 	Model     string
 	Messages  []Message
 	MaxTokens int
+	// OnDelta, when non-nil, receives each increment of reply text as it
+	// arrives, so a caller can relay the reply onward mid-stream. Chat still
+	// returns the assembled text either way.
+	OnDelta func(string)
 }
 
 func (r ChatRequest) body() map[string]any {
@@ -103,14 +107,16 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, error) {
 			Detail: fmt.Sprintf("HTTP %d：%s", hresp.StatusCode, summarize(body)),
 		}
 	}
-	return readStream(hresp.Body)
+	return readStream(hresp.Body, req.OnDelta)
 }
 
 // readStream consumes a 200 SSE body: data events' delta contents concatenate
-// into the reply. The parser is the single authority on SSE framing — the
-// read side only hands it raw chunks. A stream that breaks before [DONE] —
-// or speaks nonsense — is KindStream, never a quiet success.
-func readStream(body io.Reader) (string, error) {
+// into the reply, and each non-empty increment is handed to onDelta as it
+// arrives (nil onDelta just assembles). The parser is the single authority
+// on SSE framing — the read side only hands it raw chunks. A stream that
+// breaks before [DONE] — or speaks nonsense — is KindStream, never a quiet
+// success.
+func readStream(body io.Reader, onDelta func(string)) (string, error) {
 	parser := &Parser{}
 	reader := bufio.NewReader(body)
 	buf := make([]byte, 32*1024)
@@ -126,6 +132,9 @@ func readStream(body io.Reader) (string, error) {
 				return "", &Error{Kind: KindStream, Detail: err.Error()}
 			}
 			text += delta
+			if delta != "" && onDelta != nil {
+				onDelta(delta)
+			}
 		}
 		if readErr == io.EOF {
 			return "", &Error{Kind: KindStream, Detail: "响应流在结束标记（[DONE]）前中断"}

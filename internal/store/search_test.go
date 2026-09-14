@@ -41,8 +41,9 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 
 	// Roll the file back to its pre-T6 shape: no index table, no reminder
 	// columns, version 7. (The AI settings table drops too — a database
-	// from before T73 never had one — so reopening replays every migration
-	// since, the upgrade path each later ticket rides.)
+	// from before T73 never had one — and so do the agent conversation
+	// tables (T74): reopening replays every migration since, the upgrade
+	// path each later ticket rides.)
 	raw, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("open raw: %v", err)
@@ -58,6 +59,12 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 	}
 	if _, err := raw.Exec(`DROP TABLE ai_settings`); err != nil {
 		t.Fatalf("drop ai_settings: %v", err)
+	}
+	if _, err := raw.Exec(`DROP TABLE messages`); err != nil {
+		t.Fatalf("drop messages: %v", err)
+	}
+	if _, err := raw.Exec(`DROP TABLE conversations`); err != nil {
+		t.Fatalf("drop conversations: %v", err)
 	}
 	if _, err := raw.Exec(`PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("set version: %v", err)
