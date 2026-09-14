@@ -6,39 +6,39 @@
 ## 前置工具链
 
 1. **Flutter SDK**：本仓库用 Flutter 3.x 稳定版（依赖要求 Dart SDK
-   ^3.13.2，见 `client/pubspec.yaml`）。装到任意路径，例如
-   `~/development/flutter`，并把 `bin` 加进 `PATH`。
+   ^3.13.2，见 `client/pubspec.yaml`）。装到任意路径（示例：
+   `~/development/flutter`），并把 `bin` 加进 `PATH`。
 2. **JDK**：17 及以上（Android Gradle Plugin 需要）。本机验证于 OpenJDK
    21（`sudo dnf install java-21-openjdk` 或任意等价安装）。
 
 ## 安装 Android SDK（cmdline-tools 方式，无需 Android Studio）
 
 ```sh
-# 1. 目录约定：SDK 放在 ~/Android/Sdk
-mkdir -p ~/Android/Sdk/cmdline-tools
+# 1. SDK 装到任意路径，以下命令都以 ANDROID_HOME 引用它，换路径只改这一行
+export ANDROID_HOME=~/Android/Sdk   # 等号右边是示例，换成你的实际位置
+mkdir -p "$ANDROID_HOME/cmdline-tools"
 
 # 2. 下载最新 commandline-tools（版本号会更新，取 repository XML 里的最大值）
-cd ~/Android/Sdk/cmdline-tools
+cd "$ANDROID_HOME/cmdline-tools"
 curl -fsSL -o cmdtools.zip \
   https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
 unzip cmdtools.zip && mv cmdline-tools latest && rm cmdtools.zip
 
 # 3. 接受 licenses 并安装基础包（平台 37 为依赖插件所需，
 #    新版 cmdline-tools 里叫 android-37.0）
-export ANDROID_HOME=~/Android/Sdk
-yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
   "platform-tools" "platforms;android-36" "platforms;android-37.0" \
   "build-tools;36.0.0"
 
-# 4. 告诉 Flutter SDK 在哪，并确认工具链就绪
-flutter config --android-sdk ~/Android/Sdk
+# 4. 告诉 Flutter SDK Android SDK 的位置，并确认工具链就绪
+flutter config --android-sdk "$ANDROID_HOME"
 flutter doctor
 ```
 
 > 注：新版 cmdline-tools 的 `flutter doctor` 可能仍显示
 > “Android license status unknown”，这是它对新版输出格式的解析问题；
-> 只要第 3 步执行过、`~/Android/Sdk/licenses/` 里有 license 文件，构建
+> 只要第 3 步执行过、`$ANDROID_HOME/licenses/` 里有 license 文件，构建
 > 不受影响。
 
 ## 构建 debug 签名 APK
