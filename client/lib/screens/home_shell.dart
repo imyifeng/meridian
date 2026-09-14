@@ -91,12 +91,19 @@ class _HomeShellState extends State<HomeShell> {
           initialOffline: widget.initialOffline,
           reminderNotifications: widget.reminderNotifications,
           reminderNow: widget.reminderNow,
-          // Sign-out lives on the 我的 page in the shell (#71).
+          // Sign-out lives on the 我的 page in the shell (#71), and search
+          // on the 搜索 page (#72).
           showLogout: false,
+          showSearch: false,
           onSignOut: widget.onSignOut,
         ),
         const AgentScreen(),
-        const SearchScreen(),
+        SearchScreen(
+          session: session,
+          cache: widget.cache,
+          initialOffline: widget.initialOffline,
+          onSignOut: widget.onSignOut,
+        ),
         ProfileScreen(
           user: session.user,
           onSignOut: widget.onSignOut,

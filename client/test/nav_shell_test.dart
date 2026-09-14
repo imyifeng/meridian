@@ -75,23 +75,44 @@ void main() {
     expect(find.text('请联系管理员在 Web 管理控制台完成 AI 设置'), findsOneWidget);
   });
 
-  testWidgets('搜索页显示建设中占位，首页内嵌搜索原位保留', (tester) async {
+  testWidgets('搜索页进入即见搜索框，输入关键词即得全文结果', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '英语学习笔记', body: '今天背了五十个词', tags: ['日常']);
+    fake.seedMemo('yifeng', '购物清单', body: 'abandon 练习册');
+
+    await pumpAndLogin(tester, clientApp(fake), 'yifeng', 'correct horse');
+
+    await tester.tap(_navLabel('搜索'));
+    await tester.pumpAndSettle();
+    // 进入搜索 Tab 即见搜索框，立即可输入，无需先点任何按钮。
+    expect(find.byKey(const Key('search_field')).hitTestable(), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('search_field')), '英语');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+
+    // The IndexedStack keeps the home list mounted, so result assertions
+    // scope to the search page's own list.
+    Finder inResults(String title) => find.descendant(
+        of: find.byKey(const Key('search_results')), matching: find.text(title));
+    expect(inResults('英语学习笔记'), findsOneWidget);
+    expect(inResults('购物清单'), findsNothing);
+  });
+
+  testWidgets('首页不再有搜索入口，搜索动作只在搜索页', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
     fake.seedMemo('yifeng', '购物清单');
 
     await pumpAndLogin(tester, clientApp(fake), 'yifeng', 'correct horse');
 
+    // The app-bar search moved to the 搜索 page (#72): no button on home,
+    // no search field anywhere but the search tab.
+    expect(find.byKey(const Key('search_button')), findsNothing);
     await tester.tap(_navLabel('搜索'));
     await tester.pumpAndSettle();
-    expect(find.text('搜索页建设中'), findsOneWidget);
-
-    // The home app-bar search stays where it was this ticket (#72 moves it).
-    await tester.tap(_navLabel('首页'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('search_button')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('search_field')), findsOneWidget);
+    expect(find.byKey(const Key('search_field')).hitTestable(), findsOneWidget);
   });
 
   testWidgets('宽窗口下底栏换为左侧栏，仍可切换页面', (tester) async {

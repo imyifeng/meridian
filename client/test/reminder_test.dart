@@ -331,30 +331,27 @@ void main() {
     var clock = DateTime(2026, 9, 4, 12, 0, 0);
     // Already past when this client first sees it: old news, no pop.
     fake.seedMemo('yifeng', '旧提醒', remindAt: clock.subtract(const Duration(hours: 3)));
+    // A future reminder that is then cancelled from (another device's) edit
+    // never fires.
+    fake.seedMemo('yifeng', '开会', remindAt: clock.add(const Duration(seconds: 30)));
     final notifications = await loginAsYifeng(tester, fake, now: () => clock);
     await tester.pump(const Duration(seconds: 16));
     expect(notifications.shown, isEmpty);
 
-    // A future reminder that is then cancelled from (another device's) edit
-    // never fires.
-    fake.seedMemo('yifeng', '开会', remindAt: clock.add(const Duration(seconds: 30)));
-    await tester.tap(find.byKey(const Key('search_button')));
-    await tester.pumpAndSettle();
-    // An empty search commits as "show everything" and reloads the list.
-    await tester.enterText(find.byKey(const Key('search_field')), '旧提醒');
-    await tester.testTextInput.receiveAction(TextInputAction.search);
-    await tester.pump(const Duration(seconds: 1));
-    await tester.enterText(find.byKey(const Key('search_field')), '');
-    await tester.testTextInput.receiveAction(TextInputAction.search);
-    await tester.pump(const Duration(seconds: 1));
+    // Opening a memo and coming back reloads the full list — an unfiltered
+    // load is what feeds the scheduler.
+    Future<void> reloadViaEditor() async {
+      await tester.tap(find.text('开会'));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    await reloadViaEditor();
     fake.setMemoReminder('yifeng', '开会', null);
     // Reload again so the cleared reminder reaches the scheduler.
-    await tester.enterText(find.byKey(const Key('search_field')), '开会');
-    await tester.testTextInput.receiveAction(TextInputAction.search);
-    await tester.pump(const Duration(seconds: 1));
-    await tester.enterText(find.byKey(const Key('search_field')), '');
-    await tester.testTextInput.receiveAction(TextInputAction.search);
-    await tester.pump(const Duration(seconds: 1));
+    await reloadViaEditor();
 
     clock = clock.add(const Duration(minutes: 2));
     await tester.pump(const Duration(seconds: 16));

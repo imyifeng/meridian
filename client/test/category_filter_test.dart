@@ -23,13 +23,6 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  // Commits the search field's text the way a keyboard's return key does.
-  Future<void> submitSearch(WidgetTester tester, String query) async {
-    await tester.enterText(find.byKey(const Key('search_field')), query);
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
-  }
-
   testWidgets('按分类筛选：正文无分类名也命中，未分类可筛，清除后恢复', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
@@ -71,15 +64,15 @@ void main() {
     expect(find.text('Meridian'), findsOneWidget);
   });
 
-  testWidgets('分类筛选与标签筛选、搜索共存，各自独立清除', (tester) async {
+  testWidgets('分类筛选与标签筛选共存，各自独立清除', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
     final work = fake.createCategory('工作');
     fake.seedMemo('yifeng', '工作A',
         body: '晨会记录', categoryId: work['id'] as int, tags: ['英语']);
     fake.seedMemo('yifeng', '工作B', categoryId: work['id'] as int);
-    // 生活C shares the tag and the search word with 工作A but lives in
-    // 未分类 — the category filter is what keeps it out below.
+    // 生活C shares the tag with 工作A but lives in 未分类 — the category
+    // filter is what keeps it out below.
     fake.seedMemo('yifeng', '生活C', body: '晨会记录', tags: ['英语']);
     await loginAsYifeng(tester, fake);
 
@@ -106,21 +99,6 @@ void main() {
     expect(find.text('工作A'), findsOneWidget);
     expect(find.text('工作B'), findsOneWidget);
     expect(find.text('生活C'), findsNothing);
-
-    // Search runs inside the category: 生活C carries 晨会记录 too but is out
-    // of scope.
-    await tester.tap(find.byKey(const Key('search_button')));
-    await tester.pumpAndSettle();
-    await submitSearch(tester, '晨会');
-    expect(find.text('工作A'), findsOneWidget);
-    expect(find.text('工作B'), findsNothing);
-    expect(find.text('生活C'), findsNothing);
-
-    // Exiting search restores the category-filtered list.
-    await tester.tap(find.byKey(const Key('clear_search_button')));
-    await tester.pumpAndSettle();
-    expect(find.text('工作A'), findsOneWidget);
-    expect(find.text('工作B'), findsOneWidget);
     expect(find.text('分类：工作'), findsOneWidget);
   });
 }
