@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../recurrence.dart';
 import '../reminders.dart';
 import '../session.dart';
 
@@ -48,9 +49,16 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
   // own tag history, the autocomplete source (T4).
   List<String> _tags = const [];
   List<String> _knownTags = const [];
-  // The one-shot reminder (T9), edited locally and saved as a whole with
-  // the rest of the memo's state; null is none.
+  // The reminder (T9), edited locally and saved as a whole with the rest of
+  // the memo's state; null is none. With a recurrence rule standing (T70)
+  // it is the next trigger time point, recomputed here whenever the rule is
+  // picked; the scheduler advances it after every firing.
   DateTime? _remindAt;
+
+  /// The reminder's recurrence rule (T70); null is a one-shot reminder or
+  /// none at all. Saved as a whole alongside _remindAt — clearing the
+  /// reminder clears both.
+  ReminderRule? _remindRule;
   int? _categoryId;
   bool _busy = false;
 
@@ -61,6 +69,7 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     _tagField = TextEditingController();
     _tags = List.of(widget.memo?.tags ?? const <String>[]);
     _remindAt = widget.memo?.remindAt;
+    _remindRule = widget.memo?.remindRule;
     _categoryId = widget.memo?.categoryId;
     _categories = widget.session.api.categories(widget.session.token);
     _loadKnownTags();
@@ -124,12 +133,13 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       if (widget.memo == null) {
         await widget.session.api.createMemo(widget.session.token,
             title: title, body: body, categoryId: _categoryId, tags: _tags,
-            remindAt: _remindAt);
+            remindAt: _remindAt, remindRule: _remindRule);
       } else {
         await widget.session.api.updateMemo(widget.session.token,
             id: widget.memo!.id, title: title, body: body,
             categoryId: _categoryId, tags: _tags,
             remindAt: widget.showReminder ? _remindAt : null,
+            remindRule: widget.showReminder ? _remindRule : null,
             keepReminder: !widget.showReminder);
       }
       if (mounted) Navigator.of(context).pop();
@@ -325,11 +335,15 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     );
   }
 
-  /// The one-shot reminder (T9): a picker row when none is set, otherwise
-  /// the standing time with change and clear actions. Editing stays local
-  /// until 保存, like the tags it sits next to.
+  /// The reminder (T9/T70): with none standing, one-shot and recurring
+  /// entries side by side; a one-shot shows its time, a recurring one its
+  /// rule and next trigger time point, each with change and clear actions.
+  /// Editing stays local until 保存, like the tags it sits next to. 清除
+  /// 取消提醒 removes the time point and the rule together — turning off
+  /// the recurrence stops the reminder.
   Widget _buildReminderSection() {
     final remindAt = _remindAt;
+    final rule = _remindRule;
     return Row(
       key: const Key('reminder_section'),
       children: [
@@ -337,28 +351,52 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: remindAt == null
-              ? TextButton.icon(
-                  key: const Key('set_reminder_button'),
-                  icon: const Icon(Icons.notification_add, size: 18),
-                  label: const Text('设置提醒'),
-                  onPressed: _busy ? null : _pickReminder,
+              ? Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: [
+                    TextButton.icon(
+                      key: const Key('set_reminder_button'),
+                      icon: const Icon(Icons.notification_add, size: 18),
+                      label: const Text('设置提醒'),
+                      onPressed: _busy ? null : _pickReminder,
+                    ),
+                    TextButton.icon(
+                      key: const Key('set_recurrence_button'),
+                      icon: const Icon(Icons.repeat, size: 18),
+                      label: const Text('设置循环'),
+                      onPressed: _busy ? null : _pickRecurrence,
+                    ),
+                  ],
                 )
               : Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 4,
                   runSpacing: 4,
                   children: [
-                    Text(formatReminder(remindAt),
-                        key: const Key('reminder_value')),
+                    Text(
+                      rule == null
+                          ? formatReminder(remindAt)
+                          : '${describeRecurrence(rule)} · 下次 ${formatReminder(remindAt)}',
+                      key: const Key('reminder_value'),
+                    ),
                     TextButton(
                       key: const Key('change_reminder_button'),
-                      onPressed: _busy ? null : _pickReminder,
+                      onPressed:
+                          _busy ? null : (rule == null
+                              ? _pickReminder
+                              : _pickRecurrence),
                       child: const Text('修改'),
                     ),
                     TextButton(
                       key: const Key('clear_reminder_button'),
-                      onPressed:
-                          _busy ? null : () => setState(() => _remindAt = null),
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() {
+                                _remindAt = null;
+                                _remindRule = null;
+                              }),
                       child: const Text('取消提醒'),
                     ),
                   ],
@@ -405,6 +443,23 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
     setState(() => _remindAt = picked);
   }
 
+  /// The recurrence picker (T70): one of the preset modes — 每天 / 每周某日 /
+  /// 每月某日 / 每年某月某日 — with interval and time of day, no end date.
+  /// 保存 computes the first occurrence strictly after now from the rule and
+  /// stores it as the reminder's next trigger time point; the scheduler
+  /// advances it after every firing.
+  Future<void> _pickRecurrence() async {
+    final rule = await showDialog<ReminderRule>(
+      context: context,
+      builder: (_) => _RecurrenceDialog(initial: _remindRule, now: _now),
+    );
+    if (rule == null || !mounted) return;
+    setState(() {
+      _remindRule = rule;
+      _remindAt = nextOccurrence(rule, _now);
+    });
+  }
+
   void _reloadCategories() {
     setState(() => _categories = widget.session.api.categories(widget.session.token));
   }
@@ -414,5 +469,161 @@ class _MemoEditScreenState extends State<MemoEditScreen> {
       if (c.isBuiltin) return c.id;
     }
     return categories.isEmpty ? null : categories.first.id;
+  }
+}
+
+String _intervalUnit(ReminderMode mode) => switch (mode) {
+      ReminderMode.daily => '天',
+      ReminderMode.weekly => '周',
+      ReminderMode.monthly => '月',
+      ReminderMode.yearly => '年',
+    };
+
+/// The recurrence editor dialog (T70). Owns its field state and returns the
+/// built [ReminderRule] on 保存, null on 取消 — the caller computes the next
+/// occurrence, keeping the dialog purely a rule editor.
+class _RecurrenceDialog extends StatefulWidget {
+  /// The rule to prefill from; null opens on the defaults (daily, today's
+  /// weekday/day/month, the next full hour).
+  final ReminderRule? initial;
+  final DateTime now;
+
+  const _RecurrenceDialog({required this.initial, required this.now});
+
+  @override
+  State<_RecurrenceDialog> createState() => _RecurrenceDialogState();
+}
+
+class _RecurrenceDialogState extends State<_RecurrenceDialog> {
+  late ReminderMode _mode = widget.initial?.mode ?? ReminderMode.daily;
+  late int _weekday = widget.initial?.weekday ?? widget.now.weekday;
+  late int _day = widget.initial?.day ?? widget.now.day;
+  late int _month = widget.initial?.month ?? widget.now.month;
+  late final TextEditingController _interval =
+      TextEditingController(text: '${widget.initial?.interval ?? 1}');
+  late TimeOfDay _time = widget.initial != null
+      ? TimeOfDay(
+          hour: widget.initial!.hour, minute: widget.initial!.minute)
+      : TimeOfDay.fromDateTime(
+          widget.now.add(const Duration(hours: 1)));
+
+  @override
+  void dispose() {
+    _interval.dispose();
+    super.dispose();
+  }
+
+  ReminderRule? _buildRule() {
+    final parsed = int.tryParse(_interval.text.trim());
+    return ReminderRule(
+      mode: _mode,
+      interval: parsed == null || parsed < 1 ? 1 : parsed,
+      weekday: _mode == ReminderMode.weekly ? _weekday : null,
+      day: _mode == ReminderMode.monthly || _mode == ReminderMode.yearly
+          ? _day
+          : null,
+      month: _mode == ReminderMode.yearly ? _month : null,
+      hour: _time.hour,
+      minute: _time.minute,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      key: const Key('recurrence_dialog'),
+      title: const Text('循环提醒'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<ReminderMode>(
+              key: const Key('recurrence_mode_dropdown'),
+              initialValue: _mode,
+              decoration: const InputDecoration(labelText: '重复'),
+              items: const [
+                DropdownMenuItem(value: ReminderMode.daily, child: Text('每天')),
+                DropdownMenuItem(value: ReminderMode.weekly, child: Text('每周')),
+                DropdownMenuItem(value: ReminderMode.monthly, child: Text('每月')),
+                DropdownMenuItem(value: ReminderMode.yearly, child: Text('每年')),
+              ],
+              onChanged: (value) => setState(() => _mode = value ?? _mode),
+            ),
+            if (_mode == ReminderMode.weekly)
+              DropdownButtonFormField<int>(
+                key: const Key('recurrence_weekday_dropdown'),
+                initialValue: _weekday,
+                decoration: const InputDecoration(labelText: '星期'),
+                items: [
+                  for (var i = 1; i <= 7; i++)
+                    DropdownMenuItem(value: i, child: Text(weekdayName(i))),
+                ],
+                onChanged: (value) => setState(() => _weekday = value ?? _weekday),
+              ),
+            if (_mode == ReminderMode.yearly)
+              DropdownButtonFormField<int>(
+                key: const Key('recurrence_month_dropdown'),
+                initialValue: _month,
+                decoration: const InputDecoration(labelText: '月'),
+                items: [
+                  for (var i = 1; i <= 12; i++)
+                    DropdownMenuItem(value: i, child: Text('$i 月')),
+                ],
+                onChanged: (value) => setState(() => _month = value ?? _month),
+              ),
+            if (_mode == ReminderMode.monthly || _mode == ReminderMode.yearly)
+              DropdownButtonFormField<int>(
+                key: const Key('recurrence_day_dropdown'),
+                initialValue: _day.clamp(1, 31),
+                decoration:
+                    const InputDecoration(labelText: '日（该月没有这天则顺延到月末）'),
+                items: [
+                  for (var i = 1; i <= 31; i++)
+                    DropdownMenuItem(value: i, child: Text('$i 日')),
+                ],
+                onChanged: (value) => setState(() => _day = value ?? _day),
+              ),
+            TextField(
+              controller: _interval,
+              key: const Key('recurrence_interval_field'),
+              decoration: InputDecoration(labelText: '间隔（${_intervalUnit(_mode)}）'),
+              keyboardType: TextInputType.number,
+            ),
+            Row(
+              children: [
+                const Text('时间'),
+                const Spacer(),
+                TextButton(
+                  key: const Key('recurrence_time_button'),
+                  onPressed: () async {
+                    final picked = await showTimePicker(
+                      context: context,
+                      initialTime: _time,
+                      initialEntryMode: TimePickerEntryMode.input,
+                      helpText: '选择提醒时间',
+                    );
+                    if (picked != null) setState(() => _time = picked);
+                  },
+                  child:
+                      Text('${twoDigits(_time.hour)}:${twoDigits(_time.minute)}'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('recurrence_cancel_button'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('recurrence_save_button'),
+          onPressed: () => Navigator.of(context).pop(_buildRule()),
+          child: const Text('保存'),
+        ),
+      ],
+    );
   }
 }

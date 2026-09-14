@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'recurrence.dart';
+
 /// Talks to the Meridian server's /api/v1 JSON API. Failures surface as
 /// ApiException with the HTTP status, so screens can branch on behavior
 /// (wrong password vs. unreachable server) without parsing bodies.
@@ -156,40 +158,52 @@ class MeridianApi {
     ];
   }
 
+  /// One memo by id; another user's — or a trashed one — is
+  /// indistinguishable from a missing one (404).
+  Future<Memo> memo(String token, {required int id}) async {
+    final data = await _request('GET', '/api/v1/memos/$id', token: token);
+    return Memo.fromJson(data);
+  }
+
   /// categoryId omitted → the server files the memo under 未分类; tags
   /// omitted → it starts with none; remindAt omitted → it starts with no
-  /// reminder. A non-null tags list is saved as given.
+  /// reminder; remindRule omitted → it starts with no recurrence (T70).
+  /// A non-null tags list is saved as given.
   Future<Memo> createMemo(String token,
       {required String title, String body = '', int? categoryId,
-      List<String>? tags, DateTime? remindAt}) async {
+      List<String>? tags, DateTime? remindAt, ReminderRule? remindRule}) async {
     final data = await _request('POST', '/api/v1/memos', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
       'tags': ?tags,
       'remind_at': ?remindAt?.toUtc().toIso8601String(),
+      'remind_rule': ?remindRule?.toJson(),
     });
     return Memo.fromJson(data);
   }
 
   /// categoryId omitted → the memo keeps its current category; tags omitted
-  /// → it keeps its current tags. By default remindAt is always sent — the
-  /// editor owns the memo's whole state — so null clears the reminder and a
-  /// time sets it. keepReminder (the Web 简易客户端's save path) sends no
-  /// remind_at at all and ignores remindAt: the server keeps the standing
-  /// one, so the save cannot overwrite a reminder another end set or moved
-  /// after this editor loaded — a state its hidden reminder UI cannot
-  /// reflect.
+  /// → it keeps its current tags. By default remindAt and remindRule are
+  /// always sent — the editor owns the memo's whole state — so null clears
+  /// the reminder and a time/rule sets it (T9, T70). keepReminder (the Web
+  /// 简易客户端's save path) sends neither field and ignores remindAt and
+  /// remindRule: the server keeps the standing ones, so the save cannot
+  /// overwrite a reminder another end set or moved after this editor loaded
+  /// — a state its hidden reminder UI cannot reflect.
   Future<Memo> updateMemo(String token,
       {required int id, required String title, String body = '',
       int? categoryId, List<String>? tags, DateTime? remindAt,
-      bool keepReminder = false}) async {
+      ReminderRule? remindRule, bool keepReminder = false}) async {
     final data = await _request('PUT', '/api/v1/memos/$id', token: token, body: {
       'title': title,
       'body': body,
       'category_id': ?categoryId,
       'tags': ?tags,
-      if (!keepReminder) 'remind_at': remindAt?.toUtc().toIso8601String() ?? '',
+      if (!keepReminder) ...{
+        'remind_at': remindAt?.toUtc().toIso8601String() ?? '',
+        'remind_rule': remindRule?.toJson() ?? '',
+      },
     });
     return Memo.fromJson(data);
   }
@@ -296,10 +310,15 @@ class Memo {
   /// they are rendered verbatim, never as Markdown.
   final List<String> tags;
 
-  /// The memo's one-shot reminder (T9), in local time; null is none. It
+  /// The memo's reminder time point (T9), in local time; null is none. With
+  /// a recurrence rule standing (T70) it is the next trigger time point. It
   /// belongs to the memo, not to any device, so every logged-in client sees
   /// the same one and fires its own local notification (ADR-0004).
   final DateTime? remindAt;
+
+  /// The memo's recurrence rule (T70); null is none. When it stands the
+  /// reminder repeats and remindAt moves forward after every firing.
+  final ReminderRule? remindRule;
 
   Memo(
       {required this.id,
@@ -307,11 +326,17 @@ class Memo {
       required this.body,
       required this.categoryId,
       this.tags = const [],
-      this.remindAt});
+      this.remindAt,
+      this.remindRule});
 
   static DateTime? _parseRemindAt(Object? raw) {
     if (raw is! String || raw.isEmpty) return null;
     return DateTime.tryParse(raw)?.toLocal();
+  }
+
+  static ReminderRule? _parseRemindRule(Object? raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    return ReminderRule.fromJson(raw);
   }
 
   factory Memo.fromJson(Map<String, dynamic> json) => Memo(
@@ -323,6 +348,7 @@ class Memo {
           for (final t in json['tags'] as List? ?? []) t as String,
         ],
         remindAt: _parseRemindAt(json['remind_at']),
+        remindRule: _parseRemindRule(json['remind_rule']),
       );
 
   /// The API wire shape, shared by the offline snapshot's encoding.
@@ -333,6 +359,7 @@ class Memo {
         'category_id': categoryId,
         'tags': tags,
         'remind_at': remindAt?.toUtc().toIso8601String(),
+        'remind_rule': remindRule?.toJson(),
       };
 }
 

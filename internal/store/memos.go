@@ -25,24 +25,33 @@ type Memo struct {
 	// in the recycle bin (T5); the zero value marshals as
 	// 0001-01-01T00:00:00Z.
 	DeletedAt time.Time `json:"deleted_at"`
-	// RemindAt is the memo's one-shot reminder (T9): nil is no reminder and
-	// marshals as null. It belongs to the memo, not to any device, so every
-	// client that sees the memo sees the same reminder (ADR-0004).
+	// RemindAt is the memo's reminder time point (T9): nil is none and
+	// marshals as null. With a recurrence rule standing (T70) it is the
+	// next trigger time point. It belongs to the memo, not to any device,
+	// so every client that sees the memo sees the same reminder (ADR-0004).
 	RemindAt *time.Time `json:"remind_at"`
+	// RemindRule is the memo's recurrence rule (T70): nil is none. When it
+	// stands, the reminder repeats and remind_at is the next occurrence.
+	RemindRule *ReminderRule `json:"remind_rule"`
 }
 
-const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at, deleted_at, remind_at"
+const memoColumns = "id, user_id, category_id, title, body, created_at, updated_at, deleted_at, remind_at, remind_rule"
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
-	var created, updated, deleted, remind string
-	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated, &deleted, &remind); err != nil {
+	var created, updated, deleted, remind, rule string
+	if err := row.Scan(&m.ID, &m.UserID, &m.CategoryID, &m.Title, &m.Body, &created, &updated, &deleted, &remind, &rule); err != nil {
 		return Memo{}, err
 	}
 	m.CreatedAt = parseTime(created)
 	m.UpdatedAt = parseTime(updated)
 	m.DeletedAt = parseTime(deleted)
 	m.RemindAt = remindAtPtr(remind)
+	remindRule, err := reminderRulePtr(rule)
+	if err != nil {
+		return Memo{}, err
+	}
+	m.RemindRule = remindRule
 	return m, nil
 }
 
@@ -118,14 +127,19 @@ func (s *Store) attachTags(userID int64, memos []Memo) error {
 // validation and CreateMemo/UpdateMemo. The field semantics mirror the wire:
 // CategoryID 0 means "no explicit category" (create falls back to the
 // built-in 未分类, update keeps the current one), Tags nil means "not
-// specified" (create starts with none, update keeps the standing set), and
-// RemindAt nil means "not specified" (the zero time is the clear value, T9).
+// specified" (create starts with none, update keeps the standing set),
+// RemindAt nil means "not specified" (the zero time is the clear value, T9),
+// and RemindRule nil means "not specified" (the zero rule is the clear
+// value, T70) — the reminder time point and the recurrence rule are
+// independent fields, so dropping the recurrence leaves the standing time
+// as a one-shot and vice versa.
 type MemoInput struct {
 	Title      string
 	Body       string
 	CategoryID int64
 	Tags       []string
 	RemindAt   *time.Time
+	RemindRule *ReminderRule
 }
 
 // CreateMemo inserts a memo owned by userID with the fields of in.
@@ -133,7 +147,7 @@ type MemoInput struct {
 // built-in 未分类. Any other value must name an existing category, or
 // ErrCategoryNotFound comes back. in.Tags may be nil (no tags) and is
 // normalized; ErrInvalidTag reports bad names. in.RemindAt nil starts with
-// no reminder (T9).
+// no reminder (T9); in.RemindRule nil starts with no recurrence (T70).
 func (s *Store) CreateMemo(userID int64, in MemoInput) (*Memo, error) {
 	names, err := normalizeTags(in.Tags)
 	if err != nil {
@@ -150,6 +164,7 @@ func (s *Store) CreateMemo(userID int64, in MemoInput) (*Memo, error) {
 		return nil, ErrCategoryNotFound
 	}
 	remind := formatRemindAt(in.RemindAt)
+	rule := reminderRuleJSON(in.RemindRule)
 	ts := now()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -157,8 +172,8 @@ func (s *Store) CreateMemo(userID int64, in MemoInput) (*Memo, error) {
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(
-		"INSERT INTO memos (user_id, category_id, title, body, remind_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		userID, categoryID, in.Title, in.Body, remind, ts, ts,
+		"INSERT INTO memos (user_id, category_id, title, body, remind_at, remind_rule, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		userID, categoryID, in.Title, in.Body, remind, rule, ts, ts,
 	)
 	if err != nil {
 		return nil, err
@@ -176,6 +191,10 @@ func (s *Store) CreateMemo(userID int64, in MemoInput) (*Memo, error) {
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	createdRule, err := reminderRulePtr(rule)
+	if err != nil {
+		return nil, err
+	}
 	m := &Memo{
 		ID:         id,
 		UserID:     userID,
@@ -186,6 +205,7 @@ func (s *Store) CreateMemo(userID int64, in MemoInput) (*Memo, error) {
 		CreatedAt:  parseTime(ts),
 		UpdatedAt:  parseTime(ts),
 		RemindAt:   remindAtPtr(remind),
+		RemindRule: createdRule,
 	}
 	return m, nil
 }
@@ -263,9 +283,12 @@ func (s *Store) MemoByID(userID, memoID int64) (*Memo, error) {
 // UpdateMemo rewrites title and body of a user's own live memo, moves it to
 // in.CategoryID when that is nonzero (it must exist; 0 leaves the category
 // as it was), replaces the tag set when in.Tags is non-nil — an empty list
-// removes every tag, nil leaves the tags as they were — and sets the
-// reminder when in.RemindAt is non-nil (a zero time clears it; nil keeps the
-// standing one, T9). A trashed memo is out of reach until restored (T5).
+// removes every tag, nil leaves the tags as they were — sets the reminder
+// when in.RemindAt is non-nil (a zero time clears it; nil keeps the
+// standing one, T9) and the recurrence rule when in.RemindRule is non-nil
+// (the zero rule clears it; nil keeps the standing one, T70). The two
+// reminder fields are independent: clearing the rule keeps the standing
+// time as a one-shot. A trashed memo is out of reach until restored (T5).
 func (s *Store) UpdateMemo(userID, memoID int64, in MemoInput) (*Memo, error) {
 	var names []string
 	if in.Tags != nil {
@@ -285,14 +308,18 @@ func (s *Store) UpdateMemo(userID, memoID int64, in MemoInput) (*Memo, error) {
 	if in.RemindAt != nil {
 		remindArg = formatRemindAt(in.RemindAt)
 	}
+	var ruleArg any // nil keeps the standing remind_rule (COALESCE)
+	if in.RemindRule != nil {
+		ruleArg = reminderRuleJSON(in.RemindRule)
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(
-		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, remind_at = COALESCE(?, remind_at), updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
-		in.Title, in.Body, in.CategoryID, in.CategoryID, remindArg, now(), memoID, userID,
+		"UPDATE memos SET title = ?, body = ?, category_id = CASE WHEN ? = 0 THEN category_id ELSE ? END, remind_at = COALESCE(?, remind_at), remind_rule = COALESCE(?, remind_rule), updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
+		in.Title, in.Body, in.CategoryID, in.CategoryID, remindArg, ruleArg, now(), memoID, userID,
 	)
 	if err != nil {
 		return nil, err

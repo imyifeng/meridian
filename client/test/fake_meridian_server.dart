@@ -59,7 +59,8 @@ class FakeMeridianServer {
 
   /// Pre-seeds a memo owned by [username], standing in for that user's client.
   void seedMemo(String username, String title,
-      {String? body, List<String>? tags, int? categoryId, DateTime? remindAt}) {
+      {String? body, List<String>? tags, int? categoryId, DateTime? remindAt,
+      Map<String, dynamic>? remindRule}) {
     _memos.add({
       'id': _nextMemoId++,
       'user_id': username,
@@ -68,6 +69,7 @@ class FakeMeridianServer {
       'body': body ?? '',
       'tags': tags != null ? _normalizeTags(tags)! : <String>[],
       'remind_at': remindAt?.toUtc().toIso8601String(),
+      'remind_rule': remindRule,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       'deleted_at': '',
@@ -89,6 +91,36 @@ class FakeMeridianServer {
     final memo = _memos
         .firstWhere((m) => m['user_id'] == username && m['title'] == title);
     memo['remind_at'] = when?.toUtc().toIso8601String();
+  }
+
+  /// The recurrence rule currently stored for the first memo titled [title];
+  /// null is none. Lets tests assert exactly what a save exported over the
+  /// wire.
+  Map<String, dynamic>? remindRuleOf(String title) =>
+      memoByTitle(title)['remind_rule'] as Map<String, dynamic>?;
+
+  /// Removes a memo's reminder outright — time point and recurrence rule —
+  /// standing in for another device having turned the reminder off.
+  void clearMemoReminder(String username, String title) {
+    final memo = _memos
+        .firstWhere((m) => m['user_id'] == username && m['title'] == title);
+    memo['remind_at'] = null;
+    memo['remind_rule'] = null;
+  }
+
+  /// Deletes a memo, standing in for another device having trashed it.
+  void deleteMemoByTitle(String username, String title) {
+    final memo = _memos
+        .firstWhere((m) => m['user_id'] == username && m['title'] == title);
+    memo['deleted_at'] = DateTime.now().toUtc().toIso8601String();
+  }
+
+  /// Rewrites a memo's body, standing in for another device having edited
+  /// it after this client's last sync.
+  void setMemoBody(String username, String title, String body) {
+    final memo = _memos
+        .firstWhere((m) => m['user_id'] == username && m['title'] == title);
+    memo['body'] = body;
   }
 
   /// Same rules as the real server: trim each name, reject blank or
@@ -395,6 +427,20 @@ class FakeMeridianServer {
     return (t == null ? 'invalid' : 'set', t);
   }
 
+  /// Decodes a remind_rule request value the way the real server does
+  /// (T70): absent → keep (create: none), '' → clear, object → set. The
+  /// real server additionally validates the rule's shape (mode-specific
+  /// fields and ranges, 400 otherwise); that contract is pinned by the
+  /// server's own seam tests, not re-enacted here.
+  (String, Map<String, dynamic>?) _decodeRemindRule(
+      Map<String, dynamic> body) {
+    final raw = body['remind_rule'];
+    if (raw == null) return ('keep', null);
+    if (raw == '') return ('clear', null);
+    if (raw is Map<String, dynamic>) return ('set', raw);
+    return ('invalid', null);
+  }
+
   Future<http.Response> _createMemo(http.Request request, String user) async {
     final body = _body(request);
     final title = (body['title'] as String? ?? '').trim();
@@ -408,6 +454,8 @@ class FakeMeridianServer {
     if (categoryId == -1) return _json(400, {'error': 'unknown_category'});
     final (remindOutcome, remindAt) = _decodeRemindAt(body);
     if (remindOutcome == 'invalid') return _json(400, {'error': 'invalid_request'});
+    final (ruleOutcome, remindRule) = _decodeRemindRule(body);
+    if (ruleOutcome == 'invalid') return _json(400, {'error': 'invalid_request'});
     final now = DateTime.now().toUtc().toIso8601String();
     final memo = {
       'id': _nextMemoId++,
@@ -418,6 +466,7 @@ class FakeMeridianServer {
       'tags': tags ?? <String>[],
       'remind_at':
           remindOutcome == 'set' ? remindAt!.toUtc().toIso8601String() : null,
+      'remind_rule': ruleOutcome == 'set' ? remindRule : null,
       'created_at': now,
       'updated_at': now,
       'deleted_at': '',
@@ -445,6 +494,8 @@ class FakeMeridianServer {
     if (categoryId == -1) return _json(400, {'error': 'unknown_category'});
     final (remindOutcome, remindAt) = _decodeRemindAt(body);
     if (remindOutcome == 'invalid') return _json(400, {'error': 'invalid_request'});
+    final (ruleOutcome, remindRule) = _decodeRemindRule(body);
+    if (ruleOutcome == 'invalid') return _json(400, {'error': 'invalid_request'});
     _memos[idx]['title'] = title;
     _memos[idx]['body'] = body['body'] as String? ?? '';
     _memos[idx]['category_id'] = categoryId;
@@ -453,6 +504,11 @@ class FakeMeridianServer {
       _memos[idx]['remind_at'] = null;
     } else if (remindOutcome == 'set') {
       _memos[idx]['remind_at'] = remindAt!.toUtc().toIso8601String();
+    }
+    if (ruleOutcome == 'clear') {
+      _memos[idx]['remind_rule'] = null;
+    } else if (ruleOutcome == 'set') {
+      _memos[idx]['remind_rule'] = remindRule;
     }
     _memos[idx]['updated_at'] = DateTime.now().toUtc().toIso8601String();
     return _json(200, _memos[idx]);

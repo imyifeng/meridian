@@ -94,6 +94,28 @@ class _MemosScreenState extends State<MemosScreen> {
         fetchMemos: () => widget.session.api.memos(widget.session.token),
         mayPoll: () => !_loader.offline && !_filters.isFiltered,
         onUnauthorized: _signedOut,
+        // A fired recurring reminder's next trigger time point (T70) goes
+        // back through the ordinary update API, but on the memo's freshest
+        // state: the write-back is a read-modify-write that moves only
+        // remind_at (and keeps whatever rule the fresh read carries), so it
+        // cannot quietly revert what another device changed since this
+        // client's last sync. GET 与 PUT 之间仍存在残余竞态窗口，取毫秒级
+        // 窗口换取不加专用端点的简单性；失败（离线、备忘录刚被删）由调度器
+        // 吞掉，过期推进路径会在之后的同步里重新接手。
+        saveNextOccurrence: (memo, next) async {
+          final fresh =
+              await widget.session.api.memo(widget.session.token, id: memo.id);
+          await widget.session.api.updateMemo(
+            widget.session.token,
+            id: fresh.id,
+            title: fresh.title,
+            body: fresh.body,
+            categoryId: fresh.categoryId,
+            tags: fresh.tags,
+            remindAt: next,
+            remindRule: fresh.remindRule,
+          );
+        },
         now: widget.reminderNow,
       )..onOpen = _openMemo;
       _reminders!.start();

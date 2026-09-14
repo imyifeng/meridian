@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -19,11 +21,19 @@ type memoInput struct {
 	// Tags nil means "not specified": create starts with no tags, update
 	// keeps the current ones. Present (even empty) replaces the whole set.
 	Tags *[]string `json:"tags"`
-	// RemindAt is the memo's one-shot reminder (T9), an RFC3339 timestamp.
+	// RemindAt is the memo's reminder time point (T9), an RFC3339 timestamp.
 	// nil means "not specified": create starts with none, update keeps the
 	// standing one. The empty string clears it; anything unparseable is a
-	// 400, never silently dropped.
+	// 400, never silently dropped. With a recurrence rule standing (T70) it
+	// is the next trigger time point.
 	RemindAt *string `json:"remind_at"`
+	// RemindRule is the memo's recurrence rule (T70), an object. nil (or
+	// JSON null) means "not specified": create starts with none, update
+	// keeps the standing one. The empty string clears it — the reminder
+	// time point is untouched, so dropping the recurrence turns the
+	// standing time back into a one-shot. Anything else unparseable or
+	// failing rule validation is a 400, never silently dropped.
+	RemindRule *json.RawMessage `json:"remind_rule"`
 }
 
 func (in memoInput) validate() (store.MemoInput, bool) {
@@ -54,7 +64,100 @@ func (in memoInput) validate() (store.MemoInput, bool) {
 			out.RemindAt = &t
 		}
 	}
+	if in.RemindRule != nil {
+		rule, err := decodeRemindRule(*in.RemindRule)
+		if err != nil {
+			return store.MemoInput{}, false
+		}
+		out.RemindRule = rule
+	}
 	return out, true
+}
+
+// remindRuleWire is the remind_rule object as the wire carries it; every
+// field is optional until the mode says otherwise.
+type remindRuleWire struct {
+	Mode     *string `json:"mode"`
+	Interval *int    `json:"interval"`
+	Weekday  *int    `json:"weekday"`
+	Day      *int    `json:"day"`
+	Month    *int    `json:"month"`
+	Hour     *int    `json:"hour"`
+	Minute   *int    `json:"minute"`
+}
+
+// decodeRemindRule parses a remind_rule request value (T70). A nil raw is
+// "not specified" — encoding/json nils the *json.RawMessage field for both
+// an absent field and an explicit JSON null, so neither reaches here with
+// bytes. The empty string is the clear value (the zero rule), and anything
+// else must be a rule object valid for its mode — an absent or out-of-range
+// field, or one the mode does not take, is an error, never silently
+// dropped.
+func decodeRemindRule(raw json.RawMessage) (*store.ReminderRule, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if string(trimmed) == `""` {
+		return &store.ReminderRule{}, nil
+	}
+	var w remindRuleWire
+	if err := json.Unmarshal(trimmed, &w); err != nil {
+		return nil, err
+	}
+	if w.Mode == nil {
+		return nil, errors.New("mode missing")
+	}
+	taken := func(v *int) bool { return v != nil }
+	rule := store.ReminderRule{Mode: *w.Mode}
+	if w.Interval != nil {
+		if *w.Interval < 1 {
+			return nil, errors.New("interval out of range")
+		}
+		rule.Interval = *w.Interval
+	} else {
+		rule.Interval = 1
+	}
+	if w.Hour == nil || w.Minute == nil {
+		return nil, errors.New("time of day missing")
+	}
+	if *w.Hour < 0 || *w.Hour > 23 || *w.Minute < 0 || *w.Minute > 59 {
+		return nil, errors.New("time of day out of range")
+	}
+	rule.Hour, rule.Minute = *w.Hour, *w.Minute
+	switch rule.Mode {
+	case "daily":
+		if taken(w.Weekday) || taken(w.Day) || taken(w.Month) {
+			return nil, errors.New("field the mode does not take")
+		}
+	case "weekly":
+		if w.Weekday == nil || *w.Weekday < 1 || *w.Weekday > 7 {
+			return nil, errors.New("weekday missing or out of range")
+		}
+		rule.Weekday = *w.Weekday
+		if taken(w.Day) || taken(w.Month) {
+			return nil, errors.New("field the mode does not take")
+		}
+	case "monthly":
+		if w.Day == nil || *w.Day < 1 || *w.Day > 31 {
+			return nil, errors.New("day missing or out of range")
+		}
+		rule.Day = *w.Day
+		if taken(w.Weekday) || taken(w.Month) {
+			return nil, errors.New("field the mode does not take")
+		}
+	case "yearly":
+		if w.Month == nil || *w.Month < 1 || *w.Month > 12 {
+			return nil, errors.New("month missing or out of range")
+		}
+		if w.Day == nil || *w.Day < 1 || *w.Day > 31 {
+			return nil, errors.New("day missing or out of range")
+		}
+		rule.Month, rule.Day = *w.Month, *w.Day
+		if taken(w.Weekday) {
+			return nil, errors.New("field the mode does not take")
+		}
+	default:
+		return nil, errors.New("unknown mode")
+	}
+	return &rule, nil
 }
 
 // writeMemoError maps the domain errors memo creation and update share to

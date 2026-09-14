@@ -17,8 +17,12 @@ class ReminderSync {
     required this.fetchMemos,
     required this.mayPoll,
     required this.onUnauthorized,
+    this.saveNextOccurrence,
     DateTime Function()? now,
-  }) : _service = ReminderService(notifications: notifications, now: now);
+  }) : _service = ReminderService(
+            notifications: notifications,
+            writeBackNext: saveNextOccurrence,
+            now: now);
 
   /// The full live list, for the quiet poll.
   final Future<List<Memo>> Function() fetchMemos;
@@ -30,6 +34,11 @@ class ReminderSync {
 
   /// The credential died; the screen signs out like any other dead session.
   final void Function() onUnauthorized;
+
+  /// Saves a fired recurring reminder's next trigger time point (T70)
+  /// through the update API; null where reminders never fire (the Web
+  /// 简易客户端).
+  final Future<void> Function(Memo memo, DateTime next)? saveNextOccurrence;
 
   /// A reminder notification tapped: open the memo it was about.
   set onOpen(void Function(Memo memo)? open) => _service.onOpen = open;

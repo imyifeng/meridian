@@ -40,8 +40,8 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 	}
 
 	// Roll the file back to its pre-T6 shape: no index table, no reminder
-	// column, version 7. Reopening then runs the FTS and reminder migrations
-	// in order — the upgrade path both later tickets ride.
+	// columns, version 7. Reopening then runs the FTS and reminder
+	// migrations in order — the upgrade path both later tickets ride.
 	raw, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("open raw: %v", err)
@@ -51,6 +51,9 @@ func TestOpenBackfillsSearchIndexForPreexistingMemos(t *testing.T) {
 	}
 	if _, err := raw.Exec(`ALTER TABLE memos DROP COLUMN remind_at`); err != nil {
 		t.Fatalf("drop remind_at: %v", err)
+	}
+	if _, err := raw.Exec(`ALTER TABLE memos DROP COLUMN remind_rule`); err != nil {
+		t.Fatalf("drop remind_rule: %v", err)
 	}
 	if _, err := raw.Exec(`PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("set version: %v", err)
