@@ -10,7 +10,9 @@ class MeridianSession {
   final String token;
 
   /// The user the token belongs to, as the server reported it at sign-in.
-  /// Null when the app resumed from a stored credential alone.
+  /// The app carries it across restarts via the identity store; null only
+  /// when no identity is known for the credential (e.g. a pre-upgrade
+  /// install resuming a token it never recorded an owner for).
   final User? user;
 
   MeridianSession({required this.api, required this.token, this.user});

@@ -272,6 +272,14 @@ class User {
         role: json['role'] as String? ?? 'user',
         memoCount: json['memo_count'] as int? ?? 0,
       );
+
+  /// The API wire shape, shared by the identity store's local encoding
+  /// (memo_count is list-only data and stays out).
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'username': username,
+        'role': role,
+      };
 }
 
 class Category {

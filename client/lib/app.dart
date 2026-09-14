@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
+import 'identity_store.dart';
 import 'memo_cache.dart';
 import 'reminders.dart';
+import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'screens/memos_screen.dart';
 import 'screens/setup_screen.dart';
 import 'server_address_store.dart';
 import 'session.dart';
 import 'theme.dart';
+import 'theme_mode_store.dart';
 import 'token_store.dart';
 
 enum AppState { loading, setup, login, memos }
@@ -36,6 +39,18 @@ class MeridianApp extends StatefulWidget {
   /// compile-time [baseUrl] on the next launch.
   final ServerAddressStore? addressStore;
 
+  /// Who the stored credential belongs to (#71): written at login, read at
+  /// boot, so the 我的 page can name the account after a restart. Tests
+  /// leave it null for the in-memory store.
+  final IdentityStore? identityStore;
+
+  /// The theme preference (ADR-0010): 深色/浅色/跟随系统, stored
+  /// client-locally, defaulting to following the system. Only the
+  /// Windows/Android 客户端 passes a store — main.dart — so only there can
+  /// the preference be set; the Web 简易客户端 and Console keep following
+  /// the system. Tests leave it null for the in-memory store.
+  final ThemeModeStore? themeModeStore;
+
   /// Transport override for UI seam tests; production uses the default
   /// socket-based client.
   final http.Client? apiClient;
@@ -60,6 +75,8 @@ class MeridianApp extends StatefulWidget {
     required this.tokenStore,
     this.memoCache,
     this.addressStore,
+    this.identityStore,
+    this.themeModeStore,
     this.apiClient,
     this.reminderNotifications,
     this.reminderNow,
@@ -74,7 +91,12 @@ class _MeridianAppState extends State<MeridianApp> {
   late final TextEditingController _serverAddress;
   late final MemoCache _memoCache;
   late final ServerAddressStore _addressStore;
+  late final IdentityStore _identityStore;
+  late final ThemeModeStore _themeModeStore;
   AppState _state = AppState.loading;
+  // The theme preference in force (ADR-0010); starts at the default and is
+  // replaced by the stored one during bootstrap.
+  ThemeMode _themeMode = ThemeMode.system;
   // The signed-in stretch's api-plus-credential (see MeridianSession):
   // built once the credential is proven, dropped at sign-out.
   MeridianSession? _session;
@@ -88,6 +110,8 @@ class _MeridianAppState extends State<MeridianApp> {
     _serverAddress = TextEditingController(text: widget.baseUrl);
     _memoCache = widget.memoCache ?? InMemoryMemoCache();
     _addressStore = widget.addressStore ?? InMemoryServerAddressStore();
+    _identityStore = widget.identityStore ?? InMemoryIdentityStore();
+    _themeModeStore = widget.themeModeStore ?? InMemoryThemeModeStore();
     _bootstrap();
   }
 
@@ -102,12 +126,19 @@ class _MeridianAppState extends State<MeridianApp> {
 
   Future<void> _bootstrap() async {
     setState(() => _state = AppState.loading);
+    // The stored theme preference (ADR-0010) applies before anything else,
+    // so a chosen 深色 never flashes through a system-light frame.
+    final mode = await _themeModeStore.read();
+    if (mounted) setState(() => _themeMode = mode);
     // The address the user last logged in with beats the compile-time
     // default (T11).
     final stored = (await _addressStore.read())?.trim();
     if (stored != null && stored.isNotEmpty) {
       _serverAddress.text = stored;
     }
+    // Who the stored credential belongs to (#71), as the last login on
+    // this device taught the client.
+    final storedUser = await _identityStore.read();
     String? token = await widget.tokenStore.read();
     try {
       final initialized = await _api().isInitialized();
@@ -121,7 +152,8 @@ class _MeridianAppState extends State<MeridianApp> {
       }
       await _api().memos(token); // prove the stored credential still works
       setState(() {
-        _session = MeridianSession(api: _api(), token: token);
+        _session = MeridianSession(
+            api: _api(), token: token, user: storedUser);
         _offline = false;
         _state = AppState.memos;
       });
@@ -144,7 +176,10 @@ class _MeridianAppState extends State<MeridianApp> {
                 : null;
         if (snapshot != null) {
           setState(() {
-            _session = MeridianSession(api: _api(), token: snapshot.token);
+            // The snapshot's token is the stored one, so the stored
+            // identity is the right one to show.
+            _session = MeridianSession(
+                api: _api(), token: snapshot.token, user: storedUser);
             _offline = true;
             _state = AppState.memos;
           });
@@ -166,8 +201,11 @@ class _MeridianAppState extends State<MeridianApp> {
     // The address just proven to work is the one to bring back next launch.
     await _addressStore.write(_serverAddress.text.trim());
     await widget.tokenStore.write(session.token);
+    // And who it belongs to (#71), so a restart can still name the account.
+    await _identityStore.write(session.user);
     setState(() {
-      _session = MeridianSession(api: _api(), token: session.token);
+      _session = MeridianSession(
+          api: _api(), token: session.token, user: session.user);
       _state = AppState.memos;
     });
   }
@@ -177,6 +215,9 @@ class _MeridianAppState extends State<MeridianApp> {
     // Signed out means the local memo cache goes too: the next user of this
     // device must not read the previous one's memos offline.
     _memoCache.clear();
+    // Nor their name and role (#71). The theme preference stays — it is a
+    // device preference, not account data (ADR-0010).
+    _identityStore.clear();
     setState(() {
       _session = null;
       _offline = false;
@@ -184,15 +225,23 @@ class _MeridianAppState extends State<MeridianApp> {
     });
   }
 
+  /// The 我的 page's theme switch (ADR-0010): the choice takes effect at
+  /// once and persists client-locally for the next launch.
+  Future<void> _setThemeMode(ThemeMode mode) async {
+    await _themeModeStore.write(mode);
+    if (mounted) setState(() => _themeMode = mode);
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Dark mode follows the system only (ADR-0007): both palettes come from
-    // the shared MD3 theme file, keyed to the platform's brightness.
+    // The shared MD3 theme file (ADR-0007) supplies both palettes; the mode
+    // follows the system unless the in-app switch (ADR-0010) chose
+    // otherwise — a client-local preference, never account data.
     return MaterialApp(
       title: 'Meridian',
       theme: meridianLightTheme,
       darkTheme: meridianDarkTheme,
-      themeMode: ThemeMode.system,
+      themeMode: _themeMode,
       home: switch (_state) {
         AppState.loading => const Scaffold(
             body: Center(child: CircularProgressIndicator()),
@@ -210,15 +259,29 @@ class _MeridianAppState extends State<MeridianApp> {
             showServerAddress: !widget.webClient,
             onAuthenticated: _authenticated,
           ),
-        AppState.memos => MemosScreen(
-            session: _session!,
-            cache: _memoCache,
-            initialOffline: _offline,
-            reminderNotifications: widget.reminderNotifications,
-            reminderNow: widget.reminderNow,
-            showReminder: !widget.webClient,
-            onSignOut: _signedOut,
-          ),
+        // The Windows/Android 客户端 gets the four-page navigation shell
+        // (#71); the Web 简易客户端 keeps its single-page memos layout
+        // (T10).
+        AppState.memos => widget.webClient
+            ? MemosScreen(
+                session: _session!,
+                cache: _memoCache,
+                initialOffline: _offline,
+                reminderNotifications: widget.reminderNotifications,
+                reminderNow: widget.reminderNow,
+                showReminder: !widget.webClient,
+                onSignOut: _signedOut,
+              )
+            : HomeShell(
+                session: _session!,
+                cache: _memoCache,
+                initialOffline: _offline,
+                reminderNotifications: widget.reminderNotifications,
+                reminderNow: widget.reminderNow,
+                onSignOut: _signedOut,
+                themeMode: _themeMode,
+                onThemeModeChanged: _setThemeMode,
+              ),
       },
     );
   }
