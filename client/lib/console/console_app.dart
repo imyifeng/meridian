@@ -4,6 +4,7 @@ import '../api_client.dart';
 import '../screens/credentials_form.dart';
 import '../session.dart';
 import '../theme.dart';
+import 'ai_settings_screen.dart';
 import 'categories_screen.dart';
 import 'users_screen.dart';
 
@@ -97,19 +98,20 @@ class _ConsoleAppState extends State<ConsoleApp> {
       );
     }
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Meridian 管理控制台'),
           actions: [signOut],
           bottom: const TabBar(
-            tabs: [Tab(text: '分类管理'), Tab(text: '用户管理')],
+            tabs: [Tab(text: '分类管理'), Tab(text: '用户管理'), Tab(text: 'AI 设置')],
           ),
         ),
         body: TabBarView(
           children: [
             CategoriesScreen(session: meridian, canManage: true),
             UsersScreen(session: meridian),
+            AISettingsScreen(session: meridian),
           ],
         ),
       ),

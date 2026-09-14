@@ -7,7 +7,7 @@ import 'package:http/testing.dart';
 /// In-process fake of the Meridian HTTP API, same shape as the real Go
 /// server: /api/v1/instance, /api/v1/setup/administrator, /api/v1/auth/login,
 /// /api/v1/categories, /api/v1/memos, /api/v1/trash, /api/v1/tags,
-/// /api/v1/users. UI seam tests drive the
+/// /api/v1/users, /api/v1/ai/settings. UI seam tests drive the
 /// real widget tree with the app's real HTTP layer (request building, JSON,
 /// status handling) pointed at this fake via an injected http.Client — widget
 /// tests cannot open real sockets, but they can run this in-process handler.
@@ -30,6 +30,24 @@ class FakeMeridianServer {
   final Map<String, String> _tokens = {}; // token -> username
   final Map<int, Map<String, dynamic>> _categories = {}; // id -> category
   final List<Map<String, dynamic>> _memos = [];
+
+  /// The instance's AI 设置 (ADR-0009), one row like the real server's.
+  /// api_key holds the plaintext here — the real server's trust boundary is
+  /// its database, the fake's is this field; reads mask it the same way.
+  Map<String, dynamic> aiSettings = {
+    'base_url': '',
+    'model': '',
+    'api_key': '',
+    'enabled': false,
+  };
+
+  /// What the next 连接测试 returns; tests set it to script failures. The
+  /// real dial (key against the configured service) is pinned by the
+  /// server's own seam tests, not re-enacted here.
+  Map<String, dynamic> aiTestResult = {'success': true};
+
+  /// How many times the console has asked for a connection test.
+  int aiTestCalls = 0;
   int _nextCategoryId = 1;
   int _nextUserId = 1;
   int _nextMemoId = 1;
@@ -274,6 +292,16 @@ class FakeMeridianServer {
       r = await _withAuth(request, (user) async => _resetPassword(user, int.tryParse(segments[4]), request));
     } else if (resource == 'users' && request.method == 'DELETE') {
       r = await _withAuth(request, (user) async => _deleteUser(user, resourceId));
+    } else if (path == '/api/v1/ai/settings' && request.method == 'GET') {
+      r = await _withAuth(request, (user) async => _getAISettings(user));
+    } else if (path == '/api/v1/ai/settings' && request.method == 'PUT') {
+      r = await _withAuth(request, (user) async => _saveAISettings(request, user));
+    } else if (path == '/api/v1/ai/settings/test' && request.method == 'POST') {
+      r = await _withAuth(request, (user) async {
+        if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+        aiTestCalls++;
+        return _json(200, aiTestResult);
+      });
     } else {
       r = _json(404, {'error': 'not_found'});
     }
@@ -405,6 +433,39 @@ class FakeMeridianServer {
 
   bool _isAdministrator(String user) =>
       _users[user]?['role'] == 'administrator';
+
+  /// The key mask, same rule as the real server: first three characters,
+  /// an ellipsis, the last four; anything shorter than 12 is masked outright.
+  static String maskApiKey(String key) {
+    if (key.isEmpty) return '';
+    if (key.length < 12) return '••••';
+    return '${key.substring(0, 3)}…${key.substring(key.length - 4)}';
+  }
+
+  http.Response _getAISettings(String user) {
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+    return _json(200, {
+      'base_url': aiSettings['base_url'],
+      'model': aiSettings['model'],
+      'api_key': maskApiKey(aiSettings['api_key'] as String),
+      'enabled': aiSettings['enabled'],
+    });
+  }
+
+  /// api_key absent/empty keeps the stored one, a value replaces it — the
+  /// same three states the real server implements.
+  http.Response _saveAISettings(http.Request request, String user) {
+    if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
+    final body = _body(request);
+    final apiKey = body['api_key'] as String?;
+    if (apiKey != null && apiKey.isNotEmpty) {
+      aiSettings['api_key'] = apiKey;
+    }
+    aiSettings['base_url'] = body['base_url'] as String? ?? '';
+    aiSettings['model'] = body['model'] as String? ?? '';
+    aiSettings['enabled'] = body['enabled'] as bool? ?? false;
+    return _getAISettings(user);
+  }
 
   /// Category assignment mirrors the real server: omitted → 未分类 (create)
   /// or unchanged (update); present but unknown → 400.
