@@ -11,6 +11,8 @@ import 'filter_sheets.dart';
 import 'memo_edit_screen.dart';
 import 'memo_view_screen.dart';
 import 'trash_screen.dart';
+import '../widgets/memo_list_tile.dart';
+import '../widgets/offline_banner.dart';
 
 /// The memo list UI: every memo of the signed-in user, newest first, each
 /// with its taxonomy category (ADR-0002). What feeds it lives in its own
@@ -43,6 +45,11 @@ class MemosScreen extends StatefulWidget {
   /// no 我的 page and keeps its app-bar logout.
   final bool showLogout;
 
+  /// False inside the navigation shell (#72): full-text search lives on the
+  /// 搜索 page, so home drops the app-bar entry. The Web 简易客户端 has no
+  /// bottom bar and keeps the app-bar search as its only way to search.
+  final bool showSearch;
+
   final VoidCallback onSignOut;
 
   const MemosScreen({
@@ -54,6 +61,7 @@ class MemosScreen extends StatefulWidget {
     this.reminderNow,
     this.showReminder = true,
     this.showLogout = true,
+    this.showSearch = true,
     required this.onSignOut,
   });
 
@@ -68,8 +76,10 @@ class _MemosScreenState extends State<MemosScreen> {
   // 分类筛选 (T14)：picked from the taxonomy sheet; categories are
   // read-only here (ADR-0002) — this only chooses among them.
   Category? _filterCategory;
-  // 全文搜索 (T6)：_searching toggles the app-bar search field,
-  // _searchQuery holds the committed query (null = not searching).
+  // 全文搜索 (T6, Web 简易客户端 only since #72)：_searching toggles the
+  // app-bar search field, _searchQuery holds the committed query (null =
+  // not searching). The navigation shell's home renders none of it — its
+  // search lives on the 搜索 page.
   bool _searching = false;
   String? _searchQuery;
   final _searchController = TextEditingController();
@@ -344,7 +354,7 @@ class _MemosScreenState extends State<MemosScreen> {
               tooltip: '退出搜索',
               onPressed: _clearSearch,
             )
-          else
+          else if (widget.showSearch)
             IconButton(
               key: const Key('search_button'),
               icon: const Icon(Icons.search),
@@ -449,24 +459,9 @@ class _MemosScreenState extends State<MemosScreen> {
   }
 
   Widget _offlineBanner() {
-    return Material(
-      key: const Key('offline_banner'),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            const Icon(Icons.wifi_off, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '离线模式：仅可查看已缓存的内容，恢复联网后自动更新',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return const OfflineBanner(
+      key: Key('offline_banner'),
+      message: '离线模式：仅可查看已缓存的内容，恢复联网后自动更新',
     );
   }
 
@@ -482,23 +477,9 @@ class _MemosScreenState extends State<MemosScreen> {
       itemCount: memos.length,
       itemBuilder: (context, i) {
         final memo = memos[i];
-        // The preview is the plain-text body itself (ADR-0008), clipped to
-        // one line by the row — no conversion of any kind.
-        final preview = memo.body;
-        return ListTile(
-          title: Text(memo.title),
-          subtitle: preview.isEmpty
-              ? null
-              : Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-          // The alarm marks a memo carrying a reminder (T9) — one set on any
-          // device shows up here, because it rode along with the memo.
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (memo.remindAt != null) ...[
-              const Icon(Icons.alarm, size: 16),
-              const SizedBox(width: 6),
-            ],
-            Text(categoryNames[memo.categoryId] ?? ''),
-          ]),
+        return MemoListTile(
+          memo: memo,
+          categoryNames: categoryNames,
           onTap: () => _openMemo(memo),
         );
       },

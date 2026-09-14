@@ -150,6 +150,24 @@ void main() {
     expect(find.text('暂无备忘录'), findsOneWidget);
   });
 
+  testWidgets('Web 简易客户端保留应用栏内嵌搜索，搜索可用', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '英语学习笔记', body: '今天背了五十个词');
+
+    // The Web 简易客户端 has no bottom bar, so it keeps the app-bar search
+    // the native shell dropped (#72).
+    await pumpAndLogin(tester, webClientApp(fake), 'yifeng', 'correct horse');
+
+    await tester.tap(find.byKey(const Key('search_button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('search_field')), '五十');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(find.text('英语学习笔记'), findsOneWidget);
+    expect(find.text('未找到匹配的备忘录'), findsNothing);
+  });
+
   testWidgets('宽窗口下登录表单居中限宽，不横向拉满', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
