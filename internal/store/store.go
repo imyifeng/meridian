@@ -161,6 +161,12 @@ var migrations = []string{
 	// property of the memo, not of any device (ADR-0004) — so every client
 	// that can read the memo can schedule the same notification.
 	`ALTER TABLE memos ADD COLUMN remind_at TEXT NOT NULL DEFAULT '';`,
+	// T70: the recurrence rule of a repeating reminder, '' for none. With a
+	// rule standing, remind_at doubles as the next trigger time point: the
+	// client that fires an occurrence computes the next one from the rule
+	// and writes it back through the update API. The rule rides the memo
+	// row like remind_at does (ADR-0004).
+	`ALTER TABLE memos ADD COLUMN remind_rule TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {

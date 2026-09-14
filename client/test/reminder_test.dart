@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:meridian/api_client.dart';
 import 'package:meridian/app.dart';
 import 'package:meridian/memo_cache.dart';
+import 'package:meridian/recurrence.dart';
 import 'package:meridian/reminders.dart';
+import 'package:meridian/screens/memo_view_screen.dart';
 import 'package:meridian/token_store.dart';
 
 import 'fake_meridian_server.dart';
@@ -391,5 +393,255 @@ void main() {
     await tester.pump(const Duration(seconds: 16));
     expect(notifications.shown.map((m) => m.title), ['开会'],
         reason: '离线只读，但提醒照常本地触发');
+  });
+
+  testWidgets('循环提醒到期触发后自动调度下一次并回写服务器', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    var clock = DateTime(2026, 9, 4, 12, 0, 0);
+    // 每天 12:01：第一个触发点在登录后 1 分钟。
+    const daily = {
+      'mode': 'daily',
+      'interval': 1,
+      'hour': 12,
+      'minute': 1,
+    };
+    fake.seedMemo('yifeng', '喝水',
+        remindAt: DateTime(2026, 9, 4, 12, 1), remindRule: daily);
+    final notifications = await loginAsYifeng(tester, fake, now: () => clock);
+    expect(notifications.shown, isEmpty, reason: '未到期不应通知');
+
+    // 越过第一个触发点：弹一次通知，客户端把下一次回写。
+    clock = clock.add(const Duration(minutes: 2));
+    await tester.pump(const Duration(seconds: 16));
+    expect(notifications.shown.map((m) => m.title), ['喝水']);
+    await tester.pump(const Duration(milliseconds: 100)); // 回写落盘
+    expect(fake.remindAtOf('喝水'), DateTime(2026, 9, 5, 12, 1),
+        reason: '触发后应回写下一次触发时间点');
+    expect(fake.remindRuleOf('喝水'), daily, reason: '回写不动循环规则');
+
+    // 静默轮询取回回写值（与本地再武装的值一致，调度不受扰动）。
+    await tester.pump(ReminderService.tickInterval * 2 + const Duration(seconds: 1));
+
+    // 越过第二个触发点：同一条循环提醒再弹一次，再回写。
+    clock = clock.add(const Duration(days: 1));
+    await tester.pump(const Duration(seconds: 16));
+    expect(notifications.shown.map((m) => m.title), ['喝水', '喝水']);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(fake.remindAtOf('喝水'), DateTime(2026, 9, 6, 12, 1));
+  });
+
+  testWidgets('错过的循环提醒不补发，推进到下一次并回写', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    // 客户端三天没开：remind_at（每天 12:01）停在 9 月 1 日，早已过宽限。
+    var clock = DateTime(2026, 9, 4, 12, 5, 0);
+    fake.seedMemo('yifeng', '喝水',
+        remindAt: DateTime(2026, 9, 1, 12, 1),
+        remindRule: const {
+          'mode': 'daily',
+          'interval': 1,
+          'hour': 12,
+          'minute': 1,
+        });
+    final notifications = await loginAsYifeng(tester, fake, now: () => clock);
+    await tester.pump(const Duration(seconds: 16));
+    expect(notifications.shown, isEmpty, reason: '错过的触发不补发');
+    await tester.pump(const Duration(milliseconds: 100)); // 回写落盘
+    expect(fake.remindAtOf('喝水'), DateTime(2026, 9, 5, 12, 1),
+        reason: '循环应从当前时刻推进到未来的下一次，而不是无声死亡');
+  });
+
+  testWidgets('回写只移动触发点，不还原其他设备的修改', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    var clock = DateTime(2026, 9, 4, 12, 0, 0);
+    fake.seedMemo('yifeng', '喝水',
+        body: '本机见过的旧正文',
+        remindAt: DateTime(2026, 9, 4, 12, 1),
+        remindRule: const {
+          'mode': 'daily',
+          'interval': 1,
+          'hour': 12,
+          'minute': 1,
+        });
+    final notifications = await loginAsYifeng(tester, fake, now: () => clock);
+
+    // 触发前，另一台设备改了正文——本机的列表快照还停在旧值。
+    fake.setMemoBody('yifeng', '喝水', '另一台设备改过的新正文');
+
+    clock = clock.add(const Duration(minutes: 2));
+    await tester.pump(const Duration(seconds: 16));
+    expect(notifications.shown.map((m) => m.title), ['喝水']);
+    await tester.pump(const Duration(milliseconds: 100)); // 回写落盘
+    expect(fake.remindAtOf('喝水'), DateTime(2026, 9, 5, 12, 1));
+    expect(fake.bodyOf('喝水'), '另一台设备改过的新正文',
+        reason: '回写不得用旧快照还原其他设备的修改');
+  });
+
+  testWidgets('循环被移除或备忘录被删除后不再触发', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    var clock = DateTime(2026, 9, 4, 12, 0, 0);
+    fake.seedMemo('yifeng', '喝水',
+        remindAt: DateTime(2026, 9, 4, 12, 1),
+        remindRule: const {
+          'mode': 'daily',
+          'interval': 1,
+          'hour': 12,
+          'minute': 1,
+        });
+    fake.seedMemo('yifeng', '吃药',
+        remindAt: DateTime(2026, 9, 4, 12, 1),
+        remindRule: const {
+          'mode': 'weekly',
+          'interval': 1,
+          'weekday': 5,
+          'hour': 12,
+          'minute': 1,
+        });
+    final notifications = await loginAsYifeng(tester, fake, now: () => clock);
+
+    // 另一台设备移除了「喝水」的循环（时间点与规则一并清除），删除了「吃药」。
+    fake.clearMemoReminder('yifeng', '喝水');
+    fake.deleteMemoByTitle('yifeng', '吃药');
+
+    // 静默轮询把两个动作都带进调度器——此时都还未到期。
+    await tester.pump(
+        ReminderService.tickInterval * 2 + const Duration(seconds: 1));
+
+    clock = clock.add(const Duration(minutes: 5));
+    await tester.pump(const Duration(seconds: 16));
+    expect(notifications.shown, isEmpty, reason: '循环已移除或备忘录已删除，不应再触发');
+  });
+
+  // Drives the recurrence dialog to a weekly-Wednesday 08:30 rule: opens
+  // it, picks the mode and weekday from the dropdowns, and sets the time
+  // through the real time picker.
+  Future<void> pickWeeklyReminder(WidgetTester tester,
+      {required String weekday,
+      required String hour,
+      required String minute}) async {
+    await tester.tap(find.byKey(const Key('set_recurrence_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recurrence_mode_dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('每周').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recurrence_weekday_dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(weekday).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recurrence_time_button')));
+    await tester.pumpAndSettle();
+    final fields = find.descendant(
+      of: find.byType(TimePickerDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(fields.first, hour);
+    await tester.enterText(fields.last, minute);
+    if (find.text('AM').evaluate().isNotEmpty) {
+      await tester.tap(find.text('AM'));
+      await tester.pump();
+    }
+    await tester.tap(find.descendant(
+      of: find.byType(TimePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recurrence_save_button')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('设置循环提醒：保存后规则与下次时间点入库，重开编辑器同一循环', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    await loginAsYifeng(tester, fake, now: () => editorNow);
+
+    await tester.tap(find.byKey(const Key('new_memo_button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('title_field')), '周报');
+    // editorNow 是 2026-01-01（周四）10:00：首个周三触发点是 1 月 7 日。
+    await pickWeeklyReminder(tester, weekday: '周三', hour: '08', minute: '30');
+    expect(valueText(tester), '每周三 08:30 · 下次 2026-01-07 08:30');
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+
+    expect(fake.remindRuleOf('周报'),
+        {'mode': 'weekly', 'interval': 1, 'weekday': 3, 'hour': 8, 'minute': 30});
+    expect(fake.remindAtOf('周报'), DateTime(2026, 1, 7, 8, 30));
+
+    // Reopening shows the same recurrence — it lives on the memo.
+    await tester.tap(find.text('周报'));
+    await tester.pumpAndSettle();
+    expect(valueText(tester), '每周三 08:30 · 下次 2026-01-07 08:30');
+  });
+
+  testWidgets('修改与清除循环提醒：保存后服务器上是新状态', (tester) async {
+    final fake = FakeMeridianServer();
+    fake.registerUser('yifeng', 'correct horse');
+    fake.seedMemo('yifeng', '周报',
+        remindAt: DateTime(2026, 1, 7, 8, 30),
+        remindRule: const {
+          'mode': 'weekly',
+          'interval': 1,
+          'weekday': 3,
+          'hour': 8,
+          'minute': 30,
+        });
+    await loginAsYifeng(tester, fake, now: () => editorNow);
+
+    await tester.tap(find.text('周报'));
+    await tester.pumpAndSettle();
+    expect(valueText(tester), '每周三 08:30 · 下次 2026-01-07 08:30');
+
+    // 修改：改为每 2 周的周三，触发点重算——首出现仍在 1 月 7 日。
+    await tester.tap(find.byKey(const Key('change_reminder_button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('recurrence_dialog')), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const Key('recurrence_interval_field')), '2');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('recurrence_save_button')));
+    await tester.pumpAndSettle();
+    expect(valueText(tester), '每 2 周的周三 08:30 · 下次 2026-01-07 08:30');
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+    expect(fake.remindRuleOf('周报')?['interval'], 2);
+    expect(fake.remindAtOf('周报'), DateTime(2026, 1, 7, 8, 30));
+
+    // 清除：时间点与循环一并消失。
+    await tester.tap(find.text('周报'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('clear_reminder_button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('reminder_value')), findsNothing);
+    expect(find.byKey(const Key('set_reminder_button')), findsOneWidget);
+    expect(find.byKey(const Key('set_recurrence_button')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('save_button')));
+    await tester.pumpAndSettle();
+    expect(fake.remindAtOf('周报'), isNull);
+    expect(fake.remindRuleOf('周报'), isNull);
+  });
+
+  testWidgets('查看页对循环提醒显示规则与下次触发时间点', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: MemoViewScreen(
+        memo: Memo(
+          id: 1,
+          title: '周报',
+          body: '',
+          categoryId: 1,
+          remindAt: DateTime(2026, 1, 7, 8, 30),
+          remindRule: const ReminderRule(
+            mode: ReminderMode.weekly,
+            weekday: 3,
+            hour: 8,
+            minute: 30,
+          ),
+        ),
+      ),
+    ));
+    expect(find.text('提醒：每周三 08:30 · 下次 2026-01-07 08:30'), findsOneWidget);
   });
 }

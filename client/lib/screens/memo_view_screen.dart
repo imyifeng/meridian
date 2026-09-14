@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../recurrence.dart';
 import '../reminders.dart';
 
 /// The offline reader (T8): a cached memo opened without a server — title,
@@ -28,7 +29,9 @@ class MemoViewScreen extends StatelessWidget {
                   const Icon(Icons.alarm, size: 18),
                   const SizedBox(width: 6),
                   Text(
-                    '提醒：${formatReminder(memo.remindAt!)}',
+                    // A recurring reminder (T70) names its rule and the
+                    // next trigger time point; a one-shot names its time.
+                    '提醒：${memo.remindRule == null ? formatReminder(memo.remindAt!) : '${describeRecurrence(memo.remindRule!)} · 下次 ${formatReminder(memo.remindAt!)}'}',
                     key: const Key('reminder_value'),
                   ),
                 ],
