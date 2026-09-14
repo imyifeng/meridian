@@ -9,8 +9,9 @@
    - 到 <https://docs.flutter.dev/get-started/install/windows> 下载
      Flutter stable 版（本仓库用 3.x 稳定版，要求 Dart SDK
      ^3.13.2，任意满足该约束的新版 stable 均可）
-   - 解压到不含空格与中文的路径，例如 `C:\dev\flutter`
-   - 把 `C:\dev\flutter\bin` 加入 `PATH`（系统设置 → 环境变量）
+   - 解压到不含空格与中文的任意路径（示例：`C:\dev\flutter`）
+   - 把 `<Flutter 安装目录>\bin` 加入 `PATH`（系统设置 → 环境变量；按
+     示例即 `C:\dev\flutter\bin`）
 2. **Visual Studio C++ 工具链**（编译 Windows 桌面 runner 用，不需要装整
    个 Visual Studio IDE）
    - 到 <https://visualstudio.microsoft.com/zh-hans/downloads/> 下载
