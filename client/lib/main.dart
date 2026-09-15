@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'confirmed_draft_store.dart';
 import 'identity_store.dart';
 import 'memo_cache.dart';
 import 'reminders_plugin.dart';
@@ -23,6 +24,9 @@ void main() {
     // the Windows/Android 客户端 gets a store, so only here is the
     // preference settable and persistent.
     themeModeStore: SecureThemeModeStore(),
+    // Which draft cards this device already confirmed (#76 review): a
+    // restored conversation must not offer a second confirmation.
+    confirmedDraftStore: SecureConfirmedDraftStore(),
     reminderNotifications: createReminderNotifications(),
   ));
 }

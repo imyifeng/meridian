@@ -26,7 +26,9 @@ import (
 //	data: {"type":"delta","text":"..."}          — the next increment of display text
 //	data: {"type":"draft","draft":{...}}         — a draft card awaiting confirmation (T75)
 //	data: {"type":"done","awaiting_input":true}  — the reply ended; whether the task still awaits user input
-//	data: {"type":"error","message":"..."}       — the reply failed; the text is safe to show
+//	data: {"type":"error","message":"...","code":"..."} — the reply failed; the text is safe to show,
+//	                                              the code is machine-readable ("not_configured" /
+//	                                              "disabled" for the availability gate, "internal" otherwise)
 //
 // A request that passes body validation answers with 200 text/event-stream
 // and speaks any failure through an error frame; problems before that (bad
@@ -243,8 +245,12 @@ func (s *server) sendAgentMessage(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		flusher.Flush()
 	}
-	sendError := func(message string) {
-		writeFrame(map[string]string{"type": "error", "message": message})
+	// agentErrorCodes name the failure modes a client may branch on (T76:
+	// the 未配置/停用 empty state keys off the code, not the text). Every
+	// failure the gate does not own is "internal" — nothing else is
+	// actionable for an ordinary user beyond the readable message.
+	sendError := func(code, message string) {
+		writeFrame(map[string]string{"type": "error", "code": code, "message": message})
 	}
 
 	// The gate speaks SSE: the client is already reading a stream, so an
@@ -252,21 +258,21 @@ func (s *server) sendAgentMessage(w http.ResponseWriter, r *http.Request) {
 	// configured instance is seeded disabled too, so the missing
 	// configuration is the more specific diagnosis and speaks first.
 	if set.BaseURL == "" || set.Model == "" || set.APIKey == "" {
-		sendError("智能体尚未配置，请联系管理员在 Web Console 中完成 AI 设置")
+		sendError("not_configured", "智能体尚未配置，请联系管理员在 Web Console 中完成 AI 设置")
 		return
 	}
 	if !set.Enabled {
-		sendError("智能体已停用，请联系管理员在 Web Console 中开启 AI 设置")
+		sendError("disabled", "智能体已停用，请联系管理员在 Web Console 中开启 AI 设置")
 		return
 	}
 
 	if _, err := s.st.AppendMessage(u.ID, store.RoleUser, content, false); err != nil {
-		sendError("消息保存失败")
+		sendError("internal", "消息保存失败")
 		return
 	}
 	task, err := s.st.OpenTaskMessages(u.ID)
 	if err != nil {
-		sendError("会话读取失败")
+		sendError("internal", "会话读取失败")
 		return
 	}
 	messages := make([]llm.Message, 0, len(task)+1)
@@ -304,7 +310,7 @@ func (s *server) sendAgentMessage(w http.ResponseWriter, r *http.Request) {
 			Tools:    agentTools(),
 		})
 		if err != nil {
-			sendError(agentFailureReason(err))
+			sendError("internal", agentFailureReason(err))
 			return
 		}
 		if len(resp.ToolCalls) == 0 {
@@ -317,18 +323,18 @@ func (s *server) sendAgentMessage(w http.ResponseWriter, r *http.Request) {
 			// was streamed is exactly what the record stores: what the user
 			// saw is what the conversation keeps.
 			if _, err := s.st.AppendMessage(u.ID, store.RoleAssistant, display.String(), awaiting); err != nil {
-				sendError("回复保存失败")
+				sendError("internal", "回复保存失败")
 				return
 			}
 			writeFrame(map[string]any{"type": "done", "awaiting_input": awaiting})
 			return
 		}
 		if round > agentToolMaxRounds {
-			sendError("模型连续调用工具次数过多，本次回复中止，请换个说法重试")
+			sendError("internal", "模型连续调用工具次数过多，本次回复中止，请换个说法重试")
 			return
 		}
 		if err := s.runToolRound(u.ID, resp, &draftPending, &messages, writeFrame); err != "" {
-			sendError(err)
+			sendError("internal", err)
 			return
 		}
 	}

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../confirmed_draft_store.dart';
 import '../memo_cache.dart';
 import '../reminders.dart';
 import '../session.dart';
@@ -38,6 +39,9 @@ class HomeShell extends StatefulWidget {
   /// home starts read-only until a retry succeeds.
   final bool initialOffline;
 
+  /// The 智能体's device-local 已确认草稿集合 (#76 review).
+  final ConfirmedDraftStore confirmedDraftStore;
+
   /// The platform notification surface (T9); home owns the scheduling.
   final ReminderNotifications? reminderNotifications;
 
@@ -57,6 +61,7 @@ class HomeShell extends StatefulWidget {
     required this.session,
     required this.cache,
     this.initialOffline = false,
+    required this.confirmedDraftStore,
     this.reminderNotifications,
     this.reminderNow,
     required this.onSignOut,
@@ -97,7 +102,12 @@ class _HomeShellState extends State<HomeShell> {
           showSearch: false,
           onSignOut: widget.onSignOut,
         ),
-        const AgentScreen(),
+        AgentScreen(
+          session: session,
+          initialOffline: widget.initialOffline,
+          confirmedDraftStore: widget.confirmedDraftStore,
+          onSignOut: widget.onSignOut,
+        ),
         SearchScreen(
           session: session,
           cache: widget.cache,

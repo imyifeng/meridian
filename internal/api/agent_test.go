@@ -276,7 +276,7 @@ func TestAgentGate(t *testing.T) {
 	t.Run("nothing configured", func(t *testing.T) {
 		env := apitest.NewEnv(t)
 		env.Administrator()
-		assertGatedTurn(t, env, "尚未配置")
+		assertGatedTurn(t, env, "not_configured", "尚未配置")
 	})
 
 	t.Run("configured but disabled", func(t *testing.T) {
@@ -290,14 +290,14 @@ func TestAgentGate(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("save AI settings: status %d, want 200", resp.StatusCode)
 		}
-		assertGatedTurn(t, env, "已停用")
+		assertGatedTurn(t, env, "disabled", "已停用")
 		if n := len(llm.requests); n != 0 {
 			t.Errorf("gated agent called the model %d times, want 0", n)
 		}
 	})
 }
 
-func assertGatedTurn(t *testing.T, env *apitest.Env, wantInMessage string) {
+func assertGatedTurn(t *testing.T, env *apitest.Env, wantCode, wantInMessage string) {
 	t.Helper()
 	administrator := env.Administrator()
 	resp := env.Call("POST", "/api/v1/agent/messages", administrator.Token, map[string]string{
@@ -318,6 +318,9 @@ func assertGatedTurn(t *testing.T, env *apitest.Env, wantInMessage string) {
 	}
 	if msg, _ := frames[0]["message"].(string); !strings.Contains(msg, wantInMessage) {
 		t.Errorf("error message %q, want it to say %q", msg, wantInMessage)
+	}
+	if code, _ := frames[0]["code"].(string); code != wantCode {
+		t.Errorf("error code %q, want %q", code, wantCode)
 	}
 
 	var out struct {
