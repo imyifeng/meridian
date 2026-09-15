@@ -20,17 +20,50 @@ import (
 
 // fakeLLM is a scripted model service: the n-th completion gets the n-th
 // script entry (the last one repeats), and every request body is captured
-// for assertions. Calls within a test are sequential, so plain fields are
+// for assertions. Since T75 every agent request carries the server's tools
+// and reads a non-streaming completion back — tool rounds resolve silently
+// server-side (ADR-0009), so the fake only ever speaks the plain JSON
+// completion shape. Calls within a test are sequential, so plain fields are
 // race-free under the mutex anyway.
 type fakeLLM struct {
 	*httptest.Server
 	mu       sync.Mutex
 	requests []map[string]any // decoded chat/completions bodies
 	auth     []string         // Authorization headers seen
-	replies  [][]string       // raw reply chunks per completion
+	replies  []fakeReply
+}
+
+// fakeReply is one scripted completion: display text and/or tool calls.
+type fakeReply struct {
+	content   string
+	toolCalls []map[string]any
+}
+
+// textReply scripts a completion that answers in text.
+func textReply(content string) fakeReply { return fakeReply{content: content} }
+
+// toolReply scripts a completion that calls tools (content stays empty —
+// tool-round chatter is never displayed).
+func toolReply(calls ...map[string]any) fakeReply { return fakeReply{toolCalls: calls} }
+
+// toolCall builds one OpenAI-shaped tool call.
+func toolCall(id, name, arguments string) map[string]any {
+	return map[string]any{
+		"id":       id,
+		"type":     "function",
+		"function": map[string]any{"name": name, "arguments": arguments},
+	}
 }
 
 func newFakeLLM(replies ...[]string) *fakeLLM {
+	scripted := make([]fakeReply, len(replies))
+	for i, chunks := range replies {
+		scripted[i] = textReply(strings.Join(chunks, ""))
+	}
+	return newFakeToolLLM(scripted...)
+}
+
+func newFakeToolLLM(replies ...fakeReply) *fakeLLM {
 	f := &fakeLLM{replies: replies}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -42,25 +75,22 @@ func newFakeLLM(replies ...[]string) *fakeLLM {
 		if i >= len(f.replies) {
 			i = len(f.replies) - 1
 		}
-		chunks := f.replies[i]
+		reply := f.replies[i]
 		f.mu.Unlock()
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher := w.(http.Flusher)
-		for _, chunk := range chunks {
-			payload, err := json.Marshal(map[string]any{
-				"choices": []map[string]any{
-					{"delta": map[string]any{"content": chunk}},
-				},
-			})
-			if err != nil {
-				panic(err)
-			}
-			fmt.Fprintf(w, "data: %s\n\n", payload)
-			flusher.Flush()
+		message := map[string]any{"role": "assistant", "content": reply.content}
+		if len(reply.toolCalls) > 0 {
+			message["content"] = nil
+			message["tool_calls"] = reply.toolCalls
 		}
-		fmt.Fprint(w, "data: [DONE]\n\n")
-		flusher.Flush()
+		payload, err := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"message": message}},
+		})
+		if err != nil {
+			panic(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(payload)
 	}))
 	return f
 }
@@ -68,12 +98,18 @@ func newFakeLLM(replies ...[]string) *fakeLLM {
 func (f *fakeLLM) request(n int) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if n >= len(f.requests) {
+		return nil // the caller's assertion reports the missing call
+	}
 	return f.requests[n]
 }
 
 // chatMessages extracts the messages array of a captured request body.
 func chatMessages(t *testing.T, body map[string]any) []map[string]any {
 	t.Helper()
+	if body == nil {
+		t.Fatal("the model was never called that many times")
+	}
 	raw, ok := body["messages"].([]any)
 	if !ok {
 		t.Fatalf("captured request %+v has no messages array", body)
@@ -489,8 +525,10 @@ func TestAgentMessagePersistsDisplayText(t *testing.T) {
 
 // The request the server puts on the model wire is the ADR-0009 one: the
 // built-in system prompt (identity, sentinel rules, the client's clock and
-// timezone) followed by the conversation, under the configured model and
-// key, always streaming.
+// timezone, and since T75 the tool policy) followed by the conversation,
+// under the configured model and key. Tools ride every request; the call
+// itself is non-streaming — tool rounds resolve silently server-side, and
+// the final text is relayed to the client over the existing delta frames.
 func TestAgentMessageModelRequest(t *testing.T) {
 	llm := newFakeLLM([]string{"已记录", "！\n[AWAITING_INPUT=false]\n"})
 	defer llm.Close()
@@ -509,8 +547,31 @@ func TestAgentMessageModelRequest(t *testing.T) {
 	if body["model"] != "meridian-mini" {
 		t.Errorf("request model %v, want meridian-mini", body["model"])
 	}
-	if body["stream"] != true {
-		t.Errorf("request stream %v, want true (ADR-0009)", body["stream"])
+	if body["stream"] != false {
+		t.Errorf("request stream %v, want false (tool rounds are non-streaming)", body["stream"])
+	}
+
+	// The six tools are offered on every request, and none of the write
+	// paths knows anything about tags: the model never writes them.
+	rawTools, ok := body["tools"].([]any)
+	if !ok {
+		t.Fatalf("request carries no tools array: %+v", body["tools"])
+	}
+	names := map[string]bool{}
+	for _, raw := range rawTools {
+		tool := raw.(map[string]any)
+		fn := tool["function"].(map[string]any)
+		names[fn["name"].(string)] = true
+		params := fn["parameters"].(map[string]any)
+		props, _ := params["properties"].(map[string]any)
+		if _, has := props["tags"]; has {
+			t.Errorf("tool %q offers a tags parameter — tags are never the model's to write", fn["name"])
+		}
+	}
+	for _, want := range []string{"search_memos", "get_memo", "update_memo", "delete_memo", "propose_draft", "list_categories"} {
+		if !names[want] {
+			t.Errorf("tools miss %q: offered %v", want, names)
+		}
 	}
 
 	msgs := chatMessages(t, body)
@@ -527,10 +588,30 @@ func TestAgentMessageModelRequest(t *testing.T) {
 		"[AWAITING_INPUT=false]",
 		"2026-09-15T14:30:00+08:00", // the injected client clock
 		"Asia/Shanghai",             // the injected timezone
+		// The tool policy (T75) is built in, not administrator-configurable:
+		// creation only through a draft card the user confirms; ambiguous
+		// change/delete instructions list candidates first; the taxonomy is
+		// read-only for the model; tags are never the model's to write; and
+		// the time-ambiguity rules — ask about missing hours and AM/PM,
+		// confirm the day when "tomorrow" is said before dawn, but never
+		// ask when no time was mentioned at all.
+		"propose_draft",
+		"候选",
+		"list_categories",
+		"标签",
+		"几点",
+		"上午还是下午",
+		"凌晨",
+		"不追问",
 	} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt %q misses %q", sys, want)
 		}
+	}
+	// The skeleton's self-description must go once tools arrive: a prompt
+	// that still claims toollessness talks the model out of its job.
+	if strings.Contains(sys, "没有接入任何工具") {
+		t.Errorf("system prompt still claims it has no tools: %q", sys)
 	}
 	if msgs[1]["role"] != "user" || msgs[1]["content"] != "帮我记一件事" {
 		t.Errorf("second message %+v, want the user's message", msgs[1])

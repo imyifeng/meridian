@@ -12,10 +12,59 @@ import (
 	"strings"
 )
 
-// Message is one turn of a chat conversation.
+// Message is one turn of a chat conversation. The tool-calling fields
+// (T75) replay a function-calling round in the OpenAI protocol shape: an
+// assistant message may carry tool_calls, and each tool result answers one
+// of them by tool_call_id.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// Tool is one function the server offers to the model: a name, a plain-text
+// description of when to use it, and a JSON Schema for its arguments.
+type Tool struct {
+	Name        string
+	Description string
+	Parameters  map[string]any
+}
+
+// ToolCall is the model's request to invoke one tool, in the OpenAI wire
+// shape (kept verbatim so a persisted round replays byte-identical). The
+// arguments are the raw JSON string — the server, not this package, decodes
+// them against the tool's schema.
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// ToolsRequest is one chat-completions call with tools offered. Unlike Chat
+// it is non-streaming: a completion under tools may answer with tool_calls
+// or with text, and the streamed incremental form of tool_calls is exactly
+// where OpenAI-compatible deployments disagree — while both answers, once
+// complete, are plain JSON. The agent's tool rounds resolve silently
+// server-side either way (ADR-0009: the user only ever sees final text), so
+// the whole agent turn goes non-streaming and the final text is relayed to
+// the client over the existing delta frames.
+type ToolsRequest struct {
+	Model     string
+	Messages  []Message
+	Tools     []Tool
+	MaxTokens int
+}
+
+// ChatResponse is one complete non-streaming completion: display text
+// and/or tool calls. Both non-empty at once is treated by the caller as a
+// tool round — the text of such a round is protocol chatter, not reply.
+type ChatResponse struct {
+	Content   string
+	ToolCalls []ToolCall
 }
 
 // ChatRequest is one chat-completions call. Every call rides the SSE wire
@@ -79,14 +128,57 @@ type Client struct {
 // reply text. The context bounds the whole call — dial, headers, and every
 // chunk read.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, error) {
-	payload, err := json.Marshal(req.body())
+	hresp, err := c.post(ctx, req.body())
 	if err != nil {
-		return "", &Error{Kind: KindConnection, Detail: "构造请求失败"}
+		return "", err
+	}
+	defer hresp.Body.Close()
+	if hresp.StatusCode != http.StatusOK {
+		return "", statusError(hresp)
+	}
+	return readStream(hresp.Body, req.OnDelta)
+}
+
+// ChatWithTools offers req.Tools and reads one complete non-streaming
+// completion back (see ToolsRequest for why not streaming). The context
+// bounds the whole call.
+func (c *Client) ChatWithTools(ctx context.Context, req ToolsRequest) (ChatResponse, error) {
+	body := map[string]any{
+		"model":    req.Model,
+		"messages": req.Messages,
+		"tools":    toolsWire(req.Tools),
+		"stream":   false,
+	}
+	if req.MaxTokens > 0 {
+		body["max_tokens"] = req.MaxTokens
+	}
+	hresp, err := c.post(ctx, body)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	defer hresp.Body.Close()
+	if hresp.StatusCode != http.StatusOK {
+		return ChatResponse{}, statusError(hresp)
+	}
+	raw, err := io.ReadAll(io.LimitReader(hresp.Body, 8<<20))
+	if err != nil {
+		return ChatResponse{}, &Error{Kind: KindStream, Detail: "响应读取失败：" + err.Error()}
+	}
+	return parseCompletion(raw)
+}
+
+// post puts one chat-completions request on the wire: the shared dial,
+// headers, and error classification of both the streaming and the
+// tool-calling call. The caller owns the response body.
+func (c *Client) post(ctx context.Context, body map[string]any) (*http.Response, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, &Error{Kind: KindConnection, Detail: "构造请求失败"}
 	}
 	url := strings.TrimRight(c.BaseURL, "/") + "/chat/completions"
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return "", &Error{Kind: KindConnection, Detail: "Base URL 无效"}
+		return nil, &Error{Kind: KindConnection, Detail: "Base URL 无效"}
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+c.APIKey)
@@ -94,20 +186,60 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, error) {
 	hresp, err := http.DefaultClient.Do(hreq)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
-			return "", &Error{Kind: KindTimeout, Detail: "等待模型服务响应超时"}
+			return nil, &Error{Kind: KindTimeout, Detail: "等待模型服务响应超时"}
 		}
-		return "", &Error{Kind: KindConnection, Detail: err.Error()}
+		return nil, &Error{Kind: KindConnection, Detail: err.Error()}
 	}
-	defer hresp.Body.Close()
-	if hresp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(hresp.Body, 1<<20))
-		return "", &Error{
-			Kind:   KindStatus,
-			Status: hresp.StatusCode,
-			Detail: fmt.Sprintf("HTTP %d：%s", hresp.StatusCode, summarize(body)),
-		}
+	return hresp, nil
+}
+
+// statusError classifies a non-200 answer; the body rides the detail so an
+// administrator can see the service's own words.
+func statusError(hresp *http.Response) *Error {
+	body, _ := io.ReadAll(io.LimitReader(hresp.Body, 1<<20))
+	return &Error{
+		Kind:   KindStatus,
+		Status: hresp.StatusCode,
+		Detail: fmt.Sprintf("HTTP %d：%s", hresp.StatusCode, summarize(body)),
 	}
-	return readStream(hresp.Body, req.OnDelta)
+}
+
+// toolsWire renders the offered tools in the OpenAI function-calling shape.
+func toolsWire(tools []Tool) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.Parameters,
+			},
+		})
+	}
+	return out
+}
+
+// parseCompletion decodes one non-streaming completion body. A 200 that
+// speaks nonsense — unparseable, or carrying no choice at all — is
+// KindStream, never a quiet success.
+func parseCompletion(raw []byte) (ChatResponse, error) {
+	var doc struct {
+		Choices []struct {
+			Message struct {
+				Content   string     `json:"content"`
+				ToolCalls []ToolCall `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return ChatResponse{}, &Error{Kind: KindStream, Detail: "响应不是有效的完成结果：" + summarize(raw)}
+	}
+	if len(doc.Choices) == 0 {
+		return ChatResponse{}, &Error{Kind: KindStream, Detail: "响应里没有任何候选回复"}
+	}
+	msg := doc.Choices[0].Message
+	return ChatResponse{Content: msg.Content, ToolCalls: msg.ToolCalls}, nil
 }
 
 // readStream consumes a 200 SSE body: data events' delta contents concatenate

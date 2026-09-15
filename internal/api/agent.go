@@ -24,6 +24,7 @@ import (
 // The reply protocol is SSE frames, one JSON object per "data:" frame:
 //
 //	data: {"type":"delta","text":"..."}          — the next increment of display text
+//	data: {"type":"draft","draft":{...}}         — a draft card awaiting confirmation (T75)
 //	data: {"type":"done","awaiting_input":true}  — the reply ended; whether the task still awaits user input
 //	data: {"type":"error","message":"..."}       — the reply failed; the text is safe to show
 //
@@ -34,17 +35,31 @@ import (
 // agentSystemPrompt is the fixed body of the system prompt (ADR-0009: the
 // prompt is built into the server, not administrator-configurable). It
 // declares who the agent is, demands the awaiting_input sentinel line that
-// task segmentation runs on, and tells the model the user's local time
-// rides along with every message. Later tickets grow this as the agent
-// gains tools.
-const agentSystemPrompt = `你是 Meridian 智能体：Meridian 备忘录应用内置的对话式助手，帮用户记录与查找备忘录。当前你还没有接入任何工具，无法真正读写备忘录——不要假装已经执行了任何操作。
+// task segmentation runs on, tells the model the user's local time rides
+// along with every message, and — T75 — fixes the tool policy: the six
+// rules the model may not talk its way around. The time rules resolve
+// against the injected local clock, so they read as facts, not conditions.
+const agentSystemPrompt = `你是 Meridian 智能体：Meridian 备忘录应用内置的对话式助手，以当前用户本人的身份，通过工具帮用户创建、查找、修改与删除备忘录。
 
 每次回复的最后一行必须是单独一行的任务状态标记，二选一：
 [AWAITING_INPUT=true] 表示任务未完成，你在等待用户补充信息或确认；
 [AWAITING_INPUT=false] 表示任务已完成，没有要追问的。
 这行标记由系统解析并移除，不会展示给用户，因此标记行之外不要再输出多余说明。
 
-用户的每条消息都会附带其本地时间与时区，涉及"今天""明天"等相对时间时一律以该时间为准。`
+工具使用规则：
+1. 创建备忘录只能先提交草稿卡片（propose_draft）：用户在卡片上确认后由系统真正创建，你永远不能直接创建备忘录。
+2. 修改或删除前，如果用户没有明确指向唯一一条备忘录，先用 search_memos 检索，把候选列出来让用户挑选，绝不凭猜测执行修改或删除。
+3. 分类只能使用 list_categories 返回的既有分类（含未分类），不能自创分类名，也不能增删分类。
+4. 标签永远不由你生成或修改：草稿没有标签字段，不要给备忘录建议标签，也不要替用户添加标签。
+
+时间与提醒策略（相对时间一律以系统注入的用户本地时间为准）：
+5. 用户说了日期或时段但缺少具体钟点（如"明天下午"）→ 必须追问具体几点，再提交草稿。
+6. 用户说的钟点分不清上下午（如"9点"）→ 先追问是上午还是下午。
+7. 现在是凌晨（0点至5点）而用户说"明天"→ 先跟用户确认指的是哪一天，再定时间。
+8. 用户完全没有提到时间 → 不追问，直接提交不带提醒的草稿：提醒是可选项。
+9. 草稿卡片还在等用户确认时，任务未完结：声明 [AWAITING_INPUT=true]。
+
+用户的每条消息都会附带其本地时间与时区。`
 
 // agentSystemPromptFor renders the system prompt for one request: the fixed
 // body plus the client-supplied local time and timezone in the context
@@ -53,17 +68,16 @@ func agentSystemPromptFor(localTime, timezone string) string {
 	return agentSystemPrompt + "\n\n当前用户本地时间：" + localTime + "（时区：" + timezone + "）"
 }
 
-// agentReplyTimeout bounds one model call. Streaming replies legitimately
-// run long, so this is generous — but a wedged model service must not hold
-// a handler forever.
+// agentReplyTimeout bounds one agent turn — every model call in the tool
+// loop included. A streaming reply legitimately runs long, so this is
+// generous, but a wedged model service must not hold a handler forever.
 const agentReplyTimeout = 120 * time.Second
 
-// agentReplyFilter turns the model's raw reply stream into display text and
-// the awaiting_input declaration. The sentinel line is this ticket's
-// stopgap protocol: with no tool calling available yet, the model declares
-// the task state as a lone "[AWAITING_INPUT=true|false]" line, which the
-// filter strips from display text; #75 replaces it with the structured
-// field of a tool call.
+// agentReplyFilter turns the model's raw reply into display text and the
+// awaiting_input declaration. The sentinel line is the reply protocol's
+// fine print (T74): the model declares the task state as a lone
+// "[AWAITING_INPUT=true|false]" line, which the filter strips from display
+// text; tool rounds (T75) speak no sentinel and are never displayed at all.
 //
 // A sentinel decides the task only as the reply's last word: stripped from
 // the display wherever it appears, but honored for the task state only when
@@ -258,7 +272,9 @@ func (s *server) sendAgentMessage(w http.ResponseWriter, r *http.Request) {
 	messages := make([]llm.Message, 0, len(task)+1)
 	messages = append(messages, llm.Message{Role: "system", Content: agentSystemPromptFor(in.LocalTime, in.Timezone)})
 	for _, m := range task {
-		messages = append(messages, llm.Message{Role: m.Role, Content: m.Content})
+		if lm, ok := agentReplayMessage(m); ok {
+			messages = append(messages, lm)
+		}
 	}
 
 	filter := &agentReplyFilter{}
@@ -273,26 +289,141 @@ func (s *server) sendAgentMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), agentReplyTimeout)
 	defer cancel()
 	client := &llm.Client{BaseURL: set.BaseURL, APIKey: set.APIKey}
-	_, err = client.Chat(ctx, llm.ChatRequest{
-		Model:    set.Model,
-		Messages: messages,
-		OnDelta:  func(delta string) { emit(filter.feed(delta)) },
-	})
-	if err != nil {
-		sendError(agentFailureReason(err))
-		return
-	}
-	emit(filter.finish())
 
-	awaiting := filter.awaitingInput()
-	// The filter already withheld the trailing whitespace, so what was
-	// streamed is exactly what the record stores: what the user saw is
-	// what the conversation keeps.
-	if _, err := s.st.AppendMessage(u.ID, store.RoleAssistant, display.String(), awaiting); err != nil {
-		sendError("回复保存失败")
-		return
+	// The tool loop (ADR-0009): every model call offers the six tools and
+	// is non-streaming — the streamed incremental form of tool_calls is
+	// where OpenAI-compatible deployments disagree, and tool rounds are
+	// invisible to the user anyway. The final text-only reply is relayed
+	// over the existing delta frames (as one delta: the upstream delivered
+	// it whole), so the client sees the same delta/done protocol as ever.
+	draftPending := false
+	for round := 1; ; round++ {
+		resp, err := client.ChatWithTools(ctx, llm.ToolsRequest{
+			Model:    set.Model,
+			Messages: messages,
+			Tools:    agentTools(),
+		})
+		if err != nil {
+			sendError(agentFailureReason(err))
+			return
+		}
+		if len(resp.ToolCalls) == 0 {
+			emit(filter.feed(resp.Content))
+			emit(filter.finish())
+			// A pending draft card is the task waiting for its user, whatever
+			// the sentinel claimed (ADR-0009: a draft to confirm is open).
+			awaiting := filter.awaitingInput() || draftPending
+			// The filter already withheld the trailing whitespace, so what
+			// was streamed is exactly what the record stores: what the user
+			// saw is what the conversation keeps.
+			if _, err := s.st.AppendMessage(u.ID, store.RoleAssistant, display.String(), awaiting); err != nil {
+				sendError("回复保存失败")
+				return
+			}
+			writeFrame(map[string]any{"type": "done", "awaiting_input": awaiting})
+			return
+		}
+		if round > agentToolMaxRounds {
+			sendError("模型连续调用工具次数过多，本次回复中止，请换个说法重试")
+			return
+		}
+		if err := s.runToolRound(u.ID, resp, &draftPending, &messages, writeFrame); err != "" {
+			sendError(err)
+			return
+		}
 	}
-	writeFrame(map[string]any{"type": "done", "awaiting_input": awaiting})
+}
+
+// runToolRound executes one tool-calling round: every call runs as the user
+// (failures come back to the model as error results to self-correct on),
+// and once all of them have run, the whole round — the assistant's calls,
+// every result, any draft card — lands in a single all-or-nothing write, so
+// a failed write can never strand half a round for the replay to dangle.
+// The return value is a handler-side failure — a model-visible tool failure
+// never is one; empty means the loop continues.
+func (s *server) runToolRound(userID int64, resp llm.ChatResponse, draftPending *bool, messages *[]llm.Message, writeFrame func(any)) string {
+	results := make([]store.ToolResult, 0, len(resp.ToolCalls))
+	replies := make([]llm.Message, 0, len(resp.ToolCalls))
+	var draft *agentDraft
+	for _, call := range resp.ToolCalls {
+		outcome := executeAgentTool(s, userID, call)
+		if outcome.draft != nil {
+			if draft != nil {
+				// One round, one card: the model gets told, not the user.
+				outcome.err = "一轮回复只能提交一张草稿卡片"
+				outcome.draft = nil
+			} else {
+				draft = outcome.draft
+			}
+		}
+		content := toolResultContent(outcome)
+		results = append(results, store.ToolResult{ToolCallID: call.ID, Content: content})
+		replies = append(replies, llm.Message{Role: "tool", Content: content, ToolCallID: call.ID})
+	}
+	callsJSON, err := json.Marshal(resp.ToolCalls)
+	if err != nil {
+		return "回复生成失败" + agentRecoveryHint
+	}
+	var draftJSON string
+	if draft != nil {
+		if b, err := json.Marshal(draft); err == nil {
+			draftJSON = string(b)
+		}
+	}
+	if err := s.st.AppendToolRound(userID, resp.Content, string(callsJSON), draftJSON, results); err != nil {
+		return "消息保存失败"
+	}
+	*messages = append(*messages, llm.Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
+	*messages = append(*messages, replies...)
+	if draft != nil {
+		*draftPending = true
+		writeFrame(map[string]any{"type": "draft", "draft": draft})
+	}
+	return ""
+}
+
+// toolResultContent renders what the model reads back from one tool call:
+// the result JSON, or an error object it can correct itself on.
+func toolResultContent(outcome agentToolOutcome) string {
+	if outcome.err != "" {
+		b, _ := json.Marshal(map[string]string{"error": outcome.err})
+		return string(b)
+	}
+	b, err := json.Marshal(outcome.result)
+	if err != nil {
+		b, _ = json.Marshal(map[string]string{"error": agentToolInternal})
+	}
+	return string(b)
+}
+
+// agentReplayMessage maps one stored message into the OpenAI protocol shape
+// the model context replays: display turns as-is, a tool round as the
+// assistant's tool_calls message followed by the tool results answering
+// them. A corrupted tool_calls record cannot be replayed faithfully, so it
+// is skipped rather than half-replayed (the round is always written from
+// marshaled calls, so this is corruption, not a condition).
+func agentReplayMessage(m store.Message) (llm.Message, bool) {
+	switch m.Role {
+	case store.RoleUser:
+		return llm.Message{Role: "user", Content: m.Content}, true
+	case store.RoleAssistant:
+		if m.ToolCalls == "" {
+			return llm.Message{Role: "assistant", Content: m.Content}, true
+		}
+		var calls []llm.ToolCall
+		if err := json.Unmarshal([]byte(m.ToolCalls), &calls); err != nil {
+			return llm.Message{}, false
+		}
+		for i := range calls {
+			if calls[i].Type == "" {
+				calls[i].Type = "function"
+			}
+		}
+		return llm.Message{Role: "assistant", Content: m.Content, ToolCalls: calls}, true
+	case store.RoleTool:
+		return llm.Message{Role: "tool", Content: m.Content, ToolCallID: m.ToolCallID}, true
+	}
+	return llm.Message{}, false
 }
 
 func (s *server) listAgentMessages(w http.ResponseWriter, r *http.Request) {

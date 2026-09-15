@@ -185,8 +185,7 @@ var migrations = []string{
 	// display record and nothing else. awaiting_input marks the task
 	// boundary on the assistant message that declared it: the still-open
 	// task (ADR-0009) is everything after the last awaiting_input=0
-	// assistant message. No tool-roundtrip columns yet — #75 extends the
-	// schema when tools arrive.
+	// assistant message.
 	`CREATE TABLE conversations (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id    INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -201,6 +200,15 @@ var migrations = []string{
 		awaiting_input  INTEGER NOT NULL DEFAULT 0,
 		created_at      TEXT NOT NULL
 	);`,
+	// T75: the tool roundtrips (ADR-0009), replayable in the OpenAI protocol
+	// shape. tool_calls holds the assistant row's JSON array of calls,
+	// tool_call_id keys each tool result to its call, and draft carries the
+	// structured草稿卡片 a propose_draft round proposed (for the client to
+	// render; the model never writes the memos table directly). All three
+	// default to '' — the display rows of every pre-existing conversation.
+	`ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '';
+	ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE messages ADD COLUMN draft TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {
