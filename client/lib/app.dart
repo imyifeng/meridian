@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
+import 'confirmed_draft_store.dart';
 import 'identity_store.dart';
 import 'memo_cache.dart';
 import 'reminders.dart';
@@ -51,6 +52,11 @@ class MeridianApp extends StatefulWidget {
   /// the system. Tests leave it null for the in-memory store.
   final ThemeModeStore? themeModeStore;
 
+  /// The 智能体's device-local 已确认草稿集合 (#76 review): production
+  /// persists via platform secure storage, tests leave it null for the
+  /// in-memory store.
+  final ConfirmedDraftStore? confirmedDraftStore;
+
   /// Transport override for UI seam tests; production uses the default
   /// socket-based client.
   final http.Client? apiClient;
@@ -77,6 +83,7 @@ class MeridianApp extends StatefulWidget {
     this.addressStore,
     this.identityStore,
     this.themeModeStore,
+    this.confirmedDraftStore,
     this.apiClient,
     this.reminderNotifications,
     this.reminderNow,
@@ -93,6 +100,7 @@ class _MeridianAppState extends State<MeridianApp> {
   late final ServerAddressStore _addressStore;
   late final IdentityStore _identityStore;
   late final ThemeModeStore _themeModeStore;
+  late final ConfirmedDraftStore _confirmedDraftStore;
   AppState _state = AppState.loading;
   // The theme preference in force (ADR-0010); starts at the default and is
   // replaced by the stored one during bootstrap.
@@ -112,6 +120,8 @@ class _MeridianAppState extends State<MeridianApp> {
     _addressStore = widget.addressStore ?? InMemoryServerAddressStore();
     _identityStore = widget.identityStore ?? InMemoryIdentityStore();
     _themeModeStore = widget.themeModeStore ?? InMemoryThemeModeStore();
+    _confirmedDraftStore =
+        widget.confirmedDraftStore ?? InMemoryConfirmedDraftStore();
     _bootstrap();
   }
 
@@ -215,9 +225,11 @@ class _MeridianAppState extends State<MeridianApp> {
     // Signed out means the local memo cache goes too: the next user of this
     // device must not read the previous one's memos offline.
     _memoCache.clear();
-    // Nor their name and role (#71). The theme preference stays — it is a
-    // device preference, not account data (ADR-0010).
+    // Nor their name and role (#71), nor which drafts they confirmed — the
+    // next user of this device starts clean. The theme preference stays —
+    // it is a device preference, not account data (ADR-0010).
     _identityStore.clear();
+    _confirmedDraftStore.clear();
     setState(() {
       _session = null;
       _offline = false;
@@ -276,6 +288,7 @@ class _MeridianAppState extends State<MeridianApp> {
                 session: _session!,
                 cache: _memoCache,
                 initialOffline: _offline,
+                confirmedDraftStore: _confirmedDraftStore,
                 reminderNotifications: widget.reminderNotifications,
                 reminderNow: widget.reminderNow,
                 onSignOut: _signedOut,

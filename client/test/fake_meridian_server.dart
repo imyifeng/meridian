@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -46,6 +48,49 @@ class FakeMeridianServer {
   /// server's own seam tests, not re-enacted here.
   Map<String, dynamic> aiTestResult = {'success': true};
 
+  /// Scripted 智能体 replies (#76): the next POST /api/v1/agent/messages in
+  /// configured mode consumes the first entry and streams its frames — each
+  /// a protocol frame, e.g. {'type': 'delta', 'text': '…'} — as its own
+  /// chunk, so the widget under test is genuinely fed piece by piece. A
+  /// frame of {'type': '_break'} ends the reply abruptly with a stream
+  /// error after the frames before it — the network dying mid-reply. An
+  /// empty script answers with a model-failure error frame, like the real
+  /// server answers a dial it cannot complete.
+  List<List<Map<String, dynamic>>> agentReplies = [];
+
+  /// Every body the agent POST endpoint has received, in order — lets tests
+  /// assert exactly what a send exported over the wire.
+  final List<Map<String, dynamic>> agentRequests = [];
+
+  /// How many times the conversation has been cleared.
+  int agentClearCalls = 0;
+
+  /// Fake-clock gap between two streamed frames; widget tests advance it
+  /// with pump(duration), which is what makes incremental rendering
+  /// observable mid-stream.
+  Duration agentFrameDelay = const Duration(milliseconds: 50);
+
+  final Map<String, List<Map<String, dynamic>>> _conversations = {};
+  int _nextMessageId = 1;
+
+  /// Pre-seeds a conversation's display record, standing in for turns kept
+  /// from earlier sessions. Draft-carrying rows render as cards on entry.
+  void seedConversation(String username, List<Map<String, dynamic>> messages) {
+    _conversations[username] = [
+      for (final m in messages)
+        {
+          'id': _nextMessageId++,
+          'awaiting_input': false,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+          ...m,
+        },
+    ];
+  }
+
+  /// The display record as the server keeps it right now.
+  List<Map<String, dynamic>> conversationOf(String username) =>
+      _conversations[username] ?? const [];
+
   /// How many times the console has asked for a connection test.
   int aiTestCalls = 0;
   int _nextCategoryId = 1;
@@ -56,8 +101,163 @@ class FakeMeridianServer {
   /// routing is by path only.
   final String url = 'http://fake.meridian.local';
 
-  /// An http.Client that serves this fake instance.
-  http.Client get client => MockClient(_route);
+  /// An http.Client that serves this fake instance. Streaming, because the
+  /// agent endpoint (#76) hands the app its reply frame by frame — the SSE
+  /// producer below paces the chunks — while every other endpoint is
+  /// answered whole through the same handler.
+  http.Client get client => MockClient.streaming(_routeStreaming);
+
+  Future<http.StreamedResponse> _routeStreaming(
+      http.BaseRequest base, http.ByteStream bodyStream) async {
+    if (offline) throw const SocketException('offline');
+    final Uint8List bytes = await bodyStream.toBytes();
+    if (base.url.path == '/api/v1/agent/messages' && base.method == 'POST') {
+      return _agentPost(base, bytes);
+    }
+    // Everything else routes through the plain handler unchanged.
+    final request = http.Request(base.method, base.url)
+      ..followRedirects = base.followRedirects
+      ..headers.addAll(base.headers);
+    if (bytes.isNotEmpty) request.bodyBytes = bytes;
+    final response = await _route(request);
+    return http.StreamedResponse(
+      Stream<List<int>>.value(response.bodyBytes),
+      response.statusCode,
+      headers: response.headers,
+      contentLength: response.bodyBytes.length,
+      reasonPhrase: response.reasonPhrase,
+    );
+  }
+
+  /// The agent's send endpoint (#74): body validation (400) before any SSE,
+  /// the availability gate as an error frame inside a 200 stream, then the
+  /// scripted reply. The display record moves the way the real server's
+  /// does: the user's turn is kept before the reply work starts, the
+  /// assistant's — what streamed, nothing more — when the done frame goes
+  /// out; a gate rejection keeps nothing.
+  Future<http.StreamedResponse> _agentPost(
+      http.BaseRequest base, List<int> bytes) async {
+    final auth = base.headers['Authorization'] ?? '';
+    final user =
+        _tokens[auth.startsWith('Bearer ') ? auth.substring(7) : ''];
+    if (user == null) return _streamedJson(401, {'error': 'unauthorized'});
+    final body =
+        bytes.isEmpty ? <String, dynamic>{} : jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    agentRequests.add(Map<String, dynamic>.from(body));
+    final content = (body['content'] as String? ?? '').trim();
+    final localTime = body['local_time'] as String? ?? '';
+    final timezone = body['timezone'] as String? ?? '';
+    // Same three gates as the real handler: content present, local_time an
+    // RFC3339 stamp with an offset, timezone a sane single line.
+    if (content.isEmpty ||
+        !_strictRfc3339.hasMatch(localTime) ||
+        DateTime.tryParse(localTime) == null ||
+        timezone.isEmpty ||
+        timezone.length > 64 ||
+        timezone.contains(RegExp('[\x00-\x1f\x7f]'))) {
+      return _streamedJson(400, {'error': 'invalid_request'});
+    }
+    final configured = (aiSettings['base_url'] as String? ?? '').isNotEmpty &&
+        (aiSettings['model'] as String? ?? '').isNotEmpty &&
+        (aiSettings['api_key'] as String? ?? '').isNotEmpty;
+    final List<Map<String, dynamic>> frames;
+    if (!configured) {
+      frames = [
+        {
+          'type': 'error',
+          'code': 'not_configured',
+          'message': '智能体尚未配置，请联系管理员在 Web Console 中完成 AI 设置',
+        },
+      ];
+    } else if (aiSettings['enabled'] != true) {
+      frames = [
+        {
+          'type': 'error',
+          'code': 'disabled',
+          'message': '智能体已停用，请联系管理员在 Web Console 中开启 AI 设置',
+        },
+      ];
+    } else {
+      _conversations
+          .putIfAbsent(user, () => [])
+          .add({
+            'id': _nextMessageId++,
+            'role': 'user',
+            'content': content,
+            'awaiting_input': false,
+            'created_at': DateTime.now().toUtc().toIso8601String(),
+          });
+      frames = agentReplies.isNotEmpty
+          ? agentReplies.removeAt(0)
+          : [
+              {
+                'type': 'error',
+                'code': 'internal',
+                'message': '回复生成失败，请稍后重试或联系管理员检查 AI 设置',
+              },
+            ];
+    }
+    return _agentSse(user, frames);
+  }
+
+  /// Streams [frames] as `data: {…}\n\n` chunks, one delayed beat apart, and
+  /// keeps the assistant's display row the moment the done frame goes out.
+  http.StreamedResponse _agentSse(
+      String user, List<Map<String, dynamic>> frames) {
+    final controller = StreamController<List<int>>();
+    Future<void>(() async {
+      for (final frame in frames) {
+        await Future<void>.delayed(agentFrameDelay);
+        if (frame['type'] == '_break') {
+          // The scripted network death: an error down the stream, then
+          // silence — exactly what a dropped connection looks like.
+          controller.addError(const SocketException('stream broken'));
+          break;
+        }
+        if (frame['type'] == 'done') {
+          final text = [
+            for (final f in frames.takeWhile((f) => f['type'] != 'done'))
+              if (f['type'] == 'delta') f['text'] as String,
+          ].join();
+          final drafts = [
+            for (final f in frames)
+              if (f['type'] == 'draft') f['draft'],
+          ];
+          _conversations.putIfAbsent(user, () => []).add({
+            'id': _nextMessageId++,
+            'role': 'assistant',
+            'content': text,
+            'awaiting_input': frame['awaiting_input'] ?? true,
+            'created_at': DateTime.now().toUtc().toIso8601String(),
+            if (drafts.isNotEmpty) 'draft': drafts.last,
+          });
+        }
+        controller.add(utf8.encode('data: ${jsonEncode(frame)}\n\n'));
+      }
+      await controller.close();
+    });
+    return http.StreamedResponse(
+      controller.stream,
+      200,
+      headers: {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+      },
+    );
+  }
+
+  http.StreamedResponse _streamedJson(int status, Object body) =>
+      http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode(jsonEncode(body))),
+        status,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+
+  /// The exacting half of local_time validation: RFC3339 demands an offset,
+  /// which DateTime.tryParse alone does not — this is what pins the client's
+  /// rfc3339Local output shape.
+  static final RegExp _strictRfc3339 =
+      RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$');
 
   /// Pre-seeds a user, standing in for the setup wizard.
   void registerUser(String username, String password,
@@ -301,6 +501,16 @@ class FakeMeridianServer {
         if (!_isAdministrator(user)) return _json(403, {'error': 'administrator_only'});
         aiTestCalls++;
         return _json(200, aiTestResult);
+      });
+    } else if (path == '/api/v1/agent/messages' && request.method == 'GET') {
+      r = await _withAuth(request, (user) async => _json(200, {
+            'messages': _conversations[user] ?? <Map<String, dynamic>>[],
+          }));
+    } else if (path == '/api/v1/agent/messages' && request.method == 'DELETE') {
+      r = await _withAuth(request, (user) async {
+        _conversations.remove(user);
+        agentClearCalls++;
+        return http.Response('', 204);
       });
     } else {
       r = _json(404, {'error': 'not_found'});

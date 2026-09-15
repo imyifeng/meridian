@@ -62,7 +62,7 @@ void main() {
     expect(find.text('购物清单'), findsOneWidget);
   });
 
-  testWidgets('智能体页显示未配置的空态占位', (tester) async {
+  testWidgets('智能体页是可用的聊天页：空会话直接可输入 (#76)', (tester) async {
     final fake = FakeMeridianServer();
     fake.registerUser('yifeng', 'correct horse');
 
@@ -71,8 +71,11 @@ void main() {
     await tester.tap(_navLabel('智能体'));
     await tester.pumpAndSettle();
 
-    expect(find.text('智能体尚未配置'), findsOneWidget);
-    expect(find.text('请联系管理员在 Web 管理控制台完成 AI 设置'), findsOneWidget);
+    // #76 起智能体页整体替换为聊天页：消息流加上输入栏，空会话立即可发消息。
+    expect(find.byKey(const Key('agent_input_field')), findsOneWidget);
+    expect(find.byKey(const Key('send_button')), findsOneWidget);
+    expect(find.byKey(const Key('clear_conversation_button')), findsOneWidget);
+    expect(find.byKey(const Key('agent_unavailable')), findsNothing);
   });
 
   testWidgets('搜索页进入即见搜索框，输入关键词即得全文结果', (tester) async {

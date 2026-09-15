@@ -255,6 +255,223 @@ class MeridianApi {
   Future<void> purgeMemo(String token, {required int id}) async {
     await _request('DELETE', '/api/v1/trash/$id', token: token);
   }
+
+  /// Sends one 智能体 message (#74) and hands back the reply's SSE frames as
+  /// [AgentEvent]s. Unlike every other call the reply is a stream — deltas
+  /// surface as they arrive, not after the whole reply — so there is no
+  /// request timeout here: the server bounds one turn itself
+  /// (agentReplyTimeout), and a mid-stream death surfaces as a stream error.
+  /// A rejection before the stream starts (bad body, dead credential) throws
+  /// ApiException as usual.
+  Future<Stream<AgentEvent>> sendAgentMessage(String token,
+      {required String content,
+      required String localTime,
+      required String timezone}) async {
+    final req = http.Request('POST', Uri.parse('$baseUrl/api/v1/agent/messages'))
+      ..headers['Content-Type'] = 'application/json'
+      ..headers['Authorization'] = 'Bearer $token'
+      ..body = jsonEncode({
+        'content': content,
+        'local_time': localTime,
+        'timezone': timezone,
+      });
+    http.StreamedResponse response;
+    try {
+      response = await _client.send(req);
+    } on Exception {
+      throw ApiException.unreachable();
+    }
+    if (response.statusCode != 200) {
+      String code = 'error';
+      try {
+        final body =
+            jsonDecode(await response.stream.bytesToString()) as Map;
+        code = body['error'] as String? ?? code;
+      } catch (_) {}
+      throw ApiException(statusCode: response.statusCode, code: code);
+    }
+    return _sseFrames(response);
+  }
+
+  /// The conversation's display record (#74): user and assistant turns only
+  /// (protocol rows are filtered server-side); an assistant row may carry
+  /// the draft card it proposed.
+  Future<List<AgentRecord>> agentMessages(String token) async {
+    final body = await _request('GET', '/api/v1/agent/messages', token: token);
+    return [
+      for (final m in body['messages'] as List? ?? [])
+        AgentRecord.fromJson(m as Map<String, dynamic>),
+    ];
+  }
+
+  /// Clears the conversation's display record (#74); the session itself is
+  /// resident and stays. 204 whether or not anything was there.
+  Future<void> clearAgentMessages(String token) async {
+    await _request('DELETE', '/api/v1/agent/messages', token: token);
+  }
+}
+
+/// The client's clock at send time as the agent API asks for it (#74):
+/// RFC3339 with the local wall time and a numeric offset — the offset that
+/// tells the server which of today's hours the user meant by "明天下午".
+/// (DateTime.toIso8601String alone is not enough: it stamps no offset at all
+/// for a non-UTC DateTime.)
+String rfc3339Local(DateTime t) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  final off = t.timeZoneOffset;
+  final sign = off.isNegative ? '-' : '+';
+  return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)}'
+      'T${two(t.hour)}:${two(t.minute)}:${two(t.second)}'
+      '$sign${two(off.inHours.abs())}:${two(off.inMinutes.abs() % 60)}';
+}
+
+/// One parsed frame of the agent reply stream, one JSON object per SSE
+/// "data:" frame (#74): the next display increment, a draft card, the turn's
+/// end — or the turn's failure, whose text is safe to show.
+sealed class AgentEvent {}
+
+class AgentDeltaEvent extends AgentEvent {
+  final String text;
+  AgentDeltaEvent(this.text);
+}
+
+class AgentDraftEvent extends AgentEvent {
+  final AgentDraft draft;
+  AgentDraftEvent(this.draft);
+}
+
+class AgentDoneEvent extends AgentEvent {
+  final bool awaitingInput;
+  AgentDoneEvent(this.awaitingInput);
+}
+
+class AgentErrorEvent extends AgentEvent {
+  final String message;
+
+  /// The machine-readable failure kind the server stamps on the frame:
+  /// "not_configured"/"disabled" are the availability gate's two diagnoses
+  /// (the page's 请联系管理员 empty states key off them), anything else —
+  /// including a frame from an older server that carries no code at all —
+  /// is "internal" and speaks as an ordinary error bubble.
+  final String code;
+
+  AgentErrorEvent(this.message, {this.code = 'internal'});
+}
+
+/// The structured draft card (the glossary's Draft) an agent turn proposes
+/// (#75), same shape as the server's agentDraft. There is deliberately no
+/// tags field: tags are never the model's to write — the client's card
+/// starts empty and only the user fills it.
+class AgentDraft {
+  final String title;
+  final String content;
+  final int categoryId;
+  final DateTime? remindAt;
+  final ReminderRule? remindRule;
+
+  AgentDraft({
+    required this.title,
+    required this.content,
+    required this.categoryId,
+    this.remindAt,
+    this.remindRule,
+  });
+
+  factory AgentDraft.fromJson(Map<String, dynamic> json) => AgentDraft(
+        title: json['title'] as String? ?? '',
+        content: json['content'] as String? ?? '',
+        categoryId: json['category_id'] as int? ?? 0,
+        remindAt: parseRemindAt(json['remind_at']),
+        remindRule: parseRemindRule(json['remind_rule']),
+      );
+}
+
+/// One turn of the conversation's display record (GET agentMessages, #74).
+class AgentRecord {
+  final int id;
+  final String role;
+  final String content;
+  final bool awaitingInput;
+  final AgentDraft? draft;
+
+  AgentRecord({
+    required this.id,
+    required this.role,
+    required this.content,
+    required this.awaitingInput,
+    this.draft,
+  });
+
+  factory AgentRecord.fromJson(Map<String, dynamic> json) => AgentRecord(
+        id: json['id'] as int,
+        role: json['role'] as String,
+        content: json['content'] as String? ?? '',
+        awaitingInput: json['awaiting_input'] as bool? ?? false,
+        draft: json['draft'] is Map<String, dynamic>
+            ? AgentDraft.fromJson(json['draft'] as Map<String, dynamic>)
+            : null,
+      );
+}
+
+/// Turns the reply stream's bytes into [AgentEvent]s. The wire is SSE —
+/// `data: {json}\n\n` — but chunks can split a line, or a rune, anywhere, so
+/// bytes buffer until a newline completes a line. Lines that carry no frame
+/// (blanks, field names the protocol does not use) are noise, and an
+/// undecodable frame is skipped: the stream never dies on one bad line.
+Stream<AgentEvent> _sseFrames(http.StreamedResponse response) async* {
+  final parser = _SseParser();
+  await for (final chunk in response.stream) {
+    for (final event in parser.feed(chunk)) {
+      yield event;
+    }
+  }
+}
+
+class _SseParser {
+  final List<int> _pending = [];
+
+  List<AgentEvent> feed(List<int> chunk) {
+    _pending.addAll(chunk);
+    final events = <AgentEvent>[];
+    var line = <int>[];
+    for (var i = 0; i < _pending.length; i++) {
+      if (_pending[i] != 0x0a) {
+        line.add(_pending[i]);
+        continue;
+      }
+      final event = _parseLine(line);
+      if (event != null) events.add(event);
+      line = <int>[];
+    }
+    _pending
+      ..clear()
+      ..addAll(line);
+    return events;
+  }
+
+  AgentEvent? _parseLine(List<int> bytes) {
+    var text = utf8.decode(bytes, allowMalformed: true);
+    if (text.endsWith('\r')) text = text.substring(0, text.length - 1);
+    if (!text.startsWith('data:')) return null;
+    var rest = text.substring(5);
+    if (rest.startsWith(' ')) rest = rest.substring(1);
+    try {
+      final json = jsonDecode(rest);
+      if (json is! Map<String, dynamic>) return null;
+      return switch (json['type']) {
+        'delta' => AgentDeltaEvent(json['text'] as String? ?? ''),
+        'draft' when json['draft'] is Map<String, dynamic> =>
+          AgentDraftEvent(
+              AgentDraft.fromJson(json['draft'] as Map<String, dynamic>)),
+        'done' => AgentDoneEvent(json['awaiting_input'] as bool? ?? true),
+        'error' => AgentErrorEvent(json['message'] as String? ?? '回复失败',
+            code: json['code'] as String? ?? 'internal'),
+        _ => null,
+      };
+    } on FormatException {
+      return null;
+    }
+  }
 }
 
 class Session {
@@ -408,15 +625,9 @@ class Memo {
       this.remindAt,
       this.remindRule});
 
-  static DateTime? _parseRemindAt(Object? raw) {
-    if (raw is! String || raw.isEmpty) return null;
-    return DateTime.tryParse(raw)?.toLocal();
-  }
+  static DateTime? _parseRemindAt(Object? raw) => parseRemindAt(raw);
 
-  static ReminderRule? _parseRemindRule(Object? raw) {
-    if (raw is! Map<String, dynamic>) return null;
-    return ReminderRule.fromJson(raw);
-  }
+  static ReminderRule? _parseRemindRule(Object? raw) => parseRemindRule(raw);
 
   factory Memo.fromJson(Map<String, dynamic> json) => Memo(
         id: json['id'] as int,
@@ -440,6 +651,20 @@ class Memo {
         'remind_at': remindAt?.toUtc().toIso8601String(),
         'remind_rule': remindRule?.toJson(),
       };
+}
+
+/// The wire's optional remind_at: RFC3339 string in, local DateTime out,
+/// absent or empty means none. Shared by Memo and AgentDraft.
+DateTime? parseRemindAt(Object? raw) {
+  if (raw is! String || raw.isEmpty) return null;
+  return DateTime.tryParse(raw)?.toLocal();
+}
+
+/// The wire's optional remind_rule object; absent means none. Shared by Memo
+/// and AgentDraft.
+ReminderRule? parseRemindRule(Object? raw) {
+  if (raw is! Map<String, dynamic>) return null;
+  return ReminderRule.fromJson(raw);
 }
 
 class ApiException implements Exception {
